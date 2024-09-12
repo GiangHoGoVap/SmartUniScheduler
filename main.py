@@ -158,7 +158,7 @@ def main():
     
     ga = GeneticAlgorithm(population_size=population_size, crossover_rate=0.8, mutation_rate=0.01, elitism=5, constraints_manager=constraints_manager)
     chromosome_length = 23 # 3 bits for day, 4 bits for session_start, 16 bits for weeks
-    max_generations = 2
+    max_generations = 500
     population = ga.run(chromosomes_df0, chromosome_length, max_generations)
     decoded_population = decode(population)
 

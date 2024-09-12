@@ -1,5 +1,5 @@
 VALID_DAY = range(2, 8)
-VALID_SESSION = range(4, 13)
+VALID_SESSION = range(3, 13)
 
 from model.utils import find_duplicates, count_overlap
 
@@ -40,7 +40,7 @@ class SessionStartConstraint(Constraint):
             if row['course_id'] == course_id:
                 if session_start + row['num_sessions'] - 1 not in VALID_SESSION:
                     penalty += 100
-                    print(f"Course {course_id}, chromosome {chromosome} violates session start constraint")
+                    # print(f"Course {course_id}, chromosome {chromosome} violates session start constraint")
                     self.violations += 1
         return -penalty
 
@@ -135,9 +135,10 @@ class CourseSameSemesterConstraint(Constraint):
                             for i in range(len(weeks_from_day_duplicates) - 1):
                                 for j in range(i + 1, len(weeks_from_day_duplicates)):
                                     if weeks_from_day_duplicates[i] == weeks_from_day_duplicates[j]:
-                                        penalty += 10
+                                        # print(f'Course {course_ids_from_day_duplicates[i]}-{group_id} and {course_ids_from_day_duplicates[j]}-{group_id} have overlapping sessions')
+                                        penalty += 25
                                         self.violations += 1
-
+        
         return -penalty
 
 class ConstraintsManager:

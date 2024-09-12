@@ -1,6 +1,5 @@
 import random
 import matplotlib.pyplot as plt
-import concurrent.futures
 
 class GeneticAlgorithm:
     def __init__(self, population_size, crossover_rate, mutation_rate, elitism, constraints_manager, hill_climbing_prob=0.3):
@@ -167,10 +166,10 @@ class GeneticAlgorithm:
         
             scores = self.evaluate_population(population)
             fitness_score = sum(scores) 
-            # print(f'Generation {i} - Fitness score: {fitness_score}')
+            print(f'Generation {i} - Fitness score: {fitness_score}')
             
             violations = self.constraints_manager.count_violations(population)
-            # print(f'Generation {i}: {violations}')
+            print(f'Generation {i}: {violations}')
             
             if fitness_score > best_population_score:
                 # Update the best population across all generations
@@ -180,8 +179,8 @@ class GeneticAlgorithm:
                     if course_id not in best_population:
                         best_population[course_id] = {}
                     best_population[course_id][group_id] = [individual, score]
-                print(f'Generation {i} - Fitness score: {fitness_score}')
-                print(f'Generation {i}: {violations}')
+                print(f'Best Generation {i} - Fitness score: {fitness_score}')
+                print(f'Best Generation {i}: {violations}')
                 best_population_score = fitness_score
 
             fitness_scores.append(fitness_score)
@@ -215,7 +214,7 @@ class GeneticAlgorithm:
 
                     filtered_population = [ind for ind in available_population if ind != parent1]
                     filtered_scores = [score for ind, score in zip(available_population, available_scores) if ind != parent1]
-                    parent2 = self.roulette_wheel_selection(available_population, available_scores)
+                    parent2 = self.roulette_wheel_selection(filtered_population, filtered_scores)
                 
                 # parent1 = self.tournament_selection(available_population, available_scores, 5)
                 # parent2 = self.tournament_selection(available_population, available_scores, 5)

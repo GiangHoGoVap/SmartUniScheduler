@@ -1,3 +1,10 @@
+# Ex: lst = [1, 2, 3, 2, 4, 5, 1, 6, 3]
+# Output:
+# {
+#     2: [1, 3],
+#     1: [0, 6],
+#     3: [2, 8]
+# }
 def find_duplicates(lst):
     duplicates = {}
     seen = {}
@@ -13,6 +20,9 @@ def find_duplicates(lst):
     
     return duplicates
 
+# Ex:     list = [1, 3, 5, 7]
+#         num_sessions = [2, 2, 2, 2]
+# Output: 0
 def count_overlap(list, num_sessions):
     overlap_cases = 0
     for i in range(len(list)):
