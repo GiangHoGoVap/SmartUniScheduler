@@ -1,6 +1,9 @@
 import random
 import matplotlib.pyplot as plt
 
+VALID_DAY = range(2, 8)
+VALID_SESSION = range(2, 11)
+
 class GeneticAlgorithm:
     def __init__(self, population_size, crossover_rate, mutation_rate, elitism, constraints_manager, hill_climbing_prob=0.3):
         self.population_size = population_size
@@ -210,21 +213,56 @@ class GeneticAlgorithm:
                 if len(available_population) < 2:
                     parent1 = parent2 = available_population[0]
                 else:
-                    parent1 = self.roulette_wheel_selection(available_population, available_scores)
+                    # parent1 = self.roulette_wheel_selection(available_population, available_scores)
+                    tournament_size = min(5, len(available_population))
+                    parent1 = self.tournament_selection(available_population, available_scores, tournament_size)
 
                     filtered_population = [ind for ind in available_population if ind != parent1]
                     filtered_scores = [score for ind, score in zip(available_population, available_scores) if ind != parent1]
-                    parent2 = self.roulette_wheel_selection(filtered_population, filtered_scores)
-                
-                # parent1 = self.tournament_selection(available_population, available_scores, 5)
-                # parent2 = self.tournament_selection(available_population, available_scores, 5)
+                    # parent2 = self.roulette_wheel_selection(filtered_population, filtered_scores)
+                    tournament_size = min(5, len(filtered_population))
+                    parent2 = self.tournament_selection(filtered_population, filtered_scores, tournament_size)
                 
                 child1, child2 = self.crossover(parent1, parent2)
                 child1 = self.mutate(child1)
                 child2 = self.mutate(child2)
                 
-                child1_course_id, child1_group_id = child1.split('-')[0], child1.split('-')[1]
-                child2_course_id, child2_group_id = child2.split('-')[0], child2.split('-')[1]
+                child1_course_id, child1_group_id, child1_bitstring = child1.split('-')
+                child2_course_id, child2_group_id, child2_bitstring = child2.split('-')
+
+                child1_day = int(child1_bitstring[:3], 2)
+                child1_session = int(child1_bitstring[3:7], 2)
+
+                valid_session_choices = [session for session in VALID_SESSION if session != 6]
+
+                if child1_day not in VALID_DAY:
+                    child1_day_bits = format(random.choice(VALID_DAY), '03b')
+                else:
+                    child1_day_bits = child1_bitstring[:3]
+
+                if child1_session not in VALID_SESSION:
+                    child1_session_bits = format(random.choice(valid_session_choices), '04b')
+                else:
+                    child1_session_bits = child1_bitstring[3:7]
+
+                child1_bitstring = child1_day_bits + child1_session_bits + child1_bitstring[7:]
+                child1 = f"{child1_course_id}-{child1_group_id}-{child1_bitstring}"
+
+                child2_day = int(child2_bitstring[:3], 2)
+                child2_session = int(child2_bitstring[3:7], 2)
+                
+                if child2_day not in VALID_DAY:
+                    child2_day_bits = format(random.choice(VALID_DAY), '03b')
+                else:
+                    child2_day_bits = child2_bitstring[:3]
+
+                if child2_session not in VALID_SESSION:
+                    child2_session_bits = format(random.choice(valid_session_choices), '04b')
+                else:
+                    child2_session_bits = child2_bitstring[3:7]
+
+                child2_bitstring = child2_day_bits + child2_session_bits + child2_bitstring[7:]
+                child2 = f"{child2_course_id}-{child2_group_id}-{child2_bitstring}"
 
                 if child1 not in next_generation and (child1_course_id, child1_group_id) not in next_gen_set:
                     next_generation.append(child1)
@@ -235,20 +273,6 @@ class GeneticAlgorithm:
                     next_generation.append(child2)
                     next_gen_set.add((child2_course_id, child2_group_id))
                     selected_parents.add((parent2.split('-')[0], parent2.split('-')[1]))
-
-                # Extract course_id and group_id for the children
-                # child1_course_id, child1_group_id = child1.split('-')[0], child1.split('-')[1]
-                # child2_course_id, child2_group_id = child2.split('-')[0], child2.split('-')[1]
-
-                # if (child1_course_id, child1_group_id) not in next_gen_set:
-                #     next_generation.append(child1)
-                #     next_gen_set.add((child1_course_id, child1_group_id))
-                #     selected_parents.add(parent1)
-
-                # if len(next_generation) < self.population_size and (child2_course_id, child2_group_id) not in next_gen_set:
-                #     next_generation.append(child2)
-                #     next_gen_set.add((child2_course_id, child2_group_id))
-                #     selected_parents.add(parent2)
 
             population = next_generation
         

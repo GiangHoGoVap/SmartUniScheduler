@@ -51,7 +51,7 @@ class LunchBreakConstraint(Constraint):
     def evaluate(self, course_id, chromosome):
         penalty = 0
         session_start = int(chromosome[3:7], 2)
-        if session_start == 6 or session_start == 7:
+        if session_start == 6:
             penalty += 25
             self.violations += 1
         return -penalty
