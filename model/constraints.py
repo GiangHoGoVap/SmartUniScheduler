@@ -40,7 +40,6 @@ class SessionStartConstraint(Constraint):
             if row['course_id'] == course_id:
                 if session_start + row['num_sessions'] - 1 not in VALID_SESSION:
                     penalty += 100
-                    # print(f"Course {course_id}, chromosome {chromosome} violates session start constraint")
                     self.violations += 1
         return -penalty
 
@@ -51,7 +50,7 @@ class LunchBreakConstraint(Constraint):
     def evaluate(self, course_id, chromosome):
         penalty = 0
         session_start = int(chromosome[3:7], 2)
-        if session_start == 6 or session_start == 7:
+        if session_start == 6:
             penalty += 25
             self.violations += 1
         return -penalty
@@ -80,7 +79,7 @@ class CourseDurationConstraint(Constraint):
         for index, row in self.course_info.iterrows():
             if row['course_id'] == course_id:
                 if total_duration != row['num_weeks']:
-                    penalty += 50 * (row['num_weeks'] - total_duration)
+                    penalty += 50 * abs(row['num_weeks'] - total_duration)
                     self.violations += 1
         return -penalty
 
@@ -116,7 +115,7 @@ class CourseSameSemesterConstraint(Constraint):
                 days = [int(bitstring[:3], 2) for bitstring in bitstrings]
                 session_starts = [int(bitstring[3:7], 2) for bitstring in bitstrings]
                 weeks = [list(bitstring[7:]) for bitstring in bitstrings]
-
+                
                 day_duplicates = find_duplicates(days)
                 if day_duplicates:
                     for day, indices in day_duplicates.items():
@@ -172,11 +171,15 @@ class ConstraintsManager:
     def count_violations(self, population):
         # population = ['CO1007-CC01-01101011011111110111111', 'CO2003-CN01-11010111011111111011111']
         self.reset_violations()
+
+        for constraint in self.constraints:
+            if constraint.name == 'Course same semester constraint':
+                constraint.evaluate_population(population)
+
         for individual in population:
             parts = individual.split('-')
             for constraint in self.constraints:
-                if constraint.name == 'Course same semester constraint':
-                    constraint.evaluate_population(population)
-                else:
+                if constraint.name != 'Course same semester constraint':
                     constraint.evaluate(parts[0], parts[2])
+
         return { constraint.name: constraint.violations for constraint in self.constraints }

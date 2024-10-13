@@ -156,10 +156,10 @@ def main():
     constraints_manager.add_constraint(course_same_semester_constraint_khmt)
     constraints_manager.add_constraint(course_same_semester_constraint_ktmt)
     
-    ga = GeneticAlgorithm(population_size=population_size, crossover_rate=0.8, mutation_rate=0.01, elitism=5, constraints_manager=constraints_manager)
+    ga = GeneticAlgorithm(population_size=population_size, crossover_rate=0.8, mutation_rate=0.1, elitism=5, constraints_manager=constraints_manager)
     chromosome_length = 23 # 3 bits for day, 4 bits for session_start, 16 bits for weeks
     max_generations = 500
-    population = ga.run(chromosomes_df0, chromosome_length, max_generations)
+    population = ga.run(chromosomes_df0, chromosome_length, max_generations, preprocessed_df1, preprocessed_df2)
     decoded_population = decode(population)
 
     result = pd.DataFrame(decoded_population)

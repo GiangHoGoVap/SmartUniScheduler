@@ -1,6 +1,8 @@
 import random
 import matplotlib.pyplot as plt
 
+VALID_SESSION = range(3, 13)
+
 class GeneticAlgorithm:
     def __init__(self, population_size, crossover_rate, mutation_rate, elitism, constraints_manager, hill_climbing_prob=0.3):
         self.population_size = population_size
@@ -17,7 +19,7 @@ class GeneticAlgorithm:
         best_fitness = self.calculate_fitness(course_id, individual.split('-')[2])
         best_individual = individual
         
-        for i in range(1, 5):  # Small number of hill climbing steps
+        for _ in range(4):  # Small number of hill climbing steps
             mutated_individual = self.mutate(best_individual)
             fitness = self.calculate_fitness(course_id, mutated_individual.split('-')[2])
             if fitness > best_fitness:
@@ -30,12 +32,12 @@ class GeneticAlgorithm:
         self.crossover_rate = self.initial_cross_rate * (1 - generation / max_generations)
         self.mutation_rate = self.initial_mutation_rate * (generation / max_generations)
 
-    def init_population(self, prefix_chromosomes, chromosome_length):
+    def init_population(self, prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2):
         population = [] # ['CO1007-CC01-01101011011111110111111', 'CO2003-CN01-11010111011111111011111']
         
         # Seed the first portion of the population with high-quality individuals
         for i in range(self.population_size):
-            high_quality_individual = str(prefix_chromosomes[i]) + "-" + self.create_high_quality_individual(chromosome_length)
+            high_quality_individual = str(prefix_chromosomes[i]) + "-" + self.create_high_quality_individual(prefix_chromosomes[i], chromosome_length, preprocessed_df1, preprocessed_df2)
             population.append(high_quality_individual)
 
         # Fill the rest of the population randomly
@@ -45,7 +47,7 @@ class GeneticAlgorithm:
 
         return population
 
-    def create_high_quality_individual(self, chromosome_length):
+    def create_high_quality_individual(self, prefix_chromosome, chromosome_length, preprocessed_df1, preprocessed_df2):
         first_part = []
         
         # First 3 characters from 2 to 7 (in binary form)
@@ -53,17 +55,36 @@ class GeneticAlgorithm:
         first_part.extend(first_3_bits)
         
         # Next 4 characters from 2 to 10 (in binary form)
-        next_4_bits = format(random.randint(2, 10), '04b')
-        first_part.extend(next_4_bits)
-        
-        remaining_length = chromosome_length - 16 - len(first_part)
-        first_part.extend(random.choice(['0', '1']) for _ in range(remaining_length))
+        next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
+        course_id = prefix_chromosome.split('-')[0]
 
+        for index, row in preprocessed_df1.iterrows():
+            if row['course_id'] == course_id:
+                while int(next_4_bits, 2) + row['num_sessions'] - 1 not in VALID_SESSION:
+                    if row['num_sessions'] == 3:
+                        next_4_bits = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
+                    else:
+                        next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
+
+        for index, row in preprocessed_df2.iterrows():
+            if row['course_id'] == course_id:
+                while int(next_4_bits, 2) + row['num_sessions'] - 1 not in VALID_SESSION:
+                    if row['num_sessions'] == 3:
+                        next_4_bits = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
+                    else:
+                        next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
+        
+        first_part.extend(next_4_bits)
+
+        # Option 1: Generate random for week bitstring
+        # remaining_length = chromosome_length - 16 - len(first_part)
+        # first_part.extend(random.choice(['0', '1']) for _ in range(remaining_length))
+
+        # Option 2: Generate bitstring with 1s for the first 15 weeks
         last_part = ['1'] * 16
         last_part[-9] = '0'  
 
         bitstring = first_part + last_part
-
         return ''.join(bitstring)
 
     def create_individual(self, chromosome_length):
@@ -155,8 +176,50 @@ class GeneticAlgorithm:
 
         return individual
 
-    def run(self, prefix_chromosomes, chromosome_length, max_generations):
-        population = self.init_population(prefix_chromosomes, chromosome_length)
+    def repair_day(self, individual):
+        course_id, group_id, bitstring = individual.split('-')
+        day = int(bitstring[:3], 2)
+        if day < 2 or day > 7:
+            repaired_bitstring = format(random.randint(2, 7), '03b') + bitstring[3:]
+            return f"{course_id}-{group_id}-{repaired_bitstring}"
+        return individual
+
+    def repair_session_start(self, individual, preprocessed_df1, preprocessed_df2):
+        course_id, group_id, bitstring = individual.split('-')
+        session_start = int(bitstring[3:7], 2)
+        
+        # Check against preprocessed_df1
+        for index, row in preprocessed_df1.iterrows():
+            if row['course_id'] == course_id:
+                session_start_bitstring = bitstring[3:7]
+                while session_start + row['num_sessions'] - 1 not in VALID_SESSION:
+                    if row['num_sessions'] == 3:
+                        session_start_bitstring = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
+                        session_start = int(session_start_bitstring, 2)
+                    else:
+                        session_start_bitstring = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
+                        session_start = int(session_start_bitstring, 2)
+                repaired_bitstring = bitstring[:3] + session_start_bitstring + bitstring[7:]
+                return f"{course_id}-{group_id}-{repaired_bitstring}"
+        
+        # Check against preprocessed_df2
+        for index, row in preprocessed_df2.iterrows():
+            if row['course_id'] == course_id:
+                session_start_bitstring = bitstring[3:7]
+                while session_start + row['num_sessions'] - 1 not in VALID_SESSION:
+                    if row['num_sessions'] == 3:
+                        session_start_bitstring = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
+                        session_start = int(session_start_bitstring, 2)
+                    else:
+                        session_start_bitstring = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
+                        session_start = int(session_start_bitstring, 2)
+                repaired_bitstring = bitstring[:3] + session_start_bitstring + bitstring[7:]
+                return f"{course_id}-{group_id}-{repaired_bitstring}"
+        
+        return individual
+
+    def run(self, prefix_chromosomes, chromosome_length, max_generations, preprocessed_df1, preprocessed_df2):
+        population = self.init_population(prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2)
         best_population = {}
         best_population_score = float('-inf')
         fitness_scores = []
@@ -185,6 +248,9 @@ class GeneticAlgorithm:
 
             fitness_scores.append(fitness_score)
 
+            if fitness_score == 0:
+                break
+
             # Hill Climbing step
             for idx in range(self.elitism):
                 if random.random() < self.hill_climbing_prob:  # Only apply hill climbing with some probability
@@ -210,18 +276,25 @@ class GeneticAlgorithm:
                 if len(available_population) < 2:
                     parent1 = parent2 = available_population[0]
                 else:
-                    parent1 = self.roulette_wheel_selection(available_population, available_scores)
+                    # parent1 = self.roulette_wheel_selection(available_population, available_scores)
+                    tournament_size = min(5, len(available_population))
+                    parent1 = self.tournament_selection(available_population, available_scores, tournament_size)
 
                     filtered_population = [ind for ind in available_population if ind != parent1]
                     filtered_scores = [score for ind, score in zip(available_population, available_scores) if ind != parent1]
-                    parent2 = self.roulette_wheel_selection(filtered_population, filtered_scores)
-                
-                # parent1 = self.tournament_selection(available_population, available_scores, 5)
-                # parent2 = self.tournament_selection(available_population, available_scores, 5)
+                    # parent2 = self.roulette_wheel_selection(filtered_population, filtered_scores)
+                    tournament_size = min(5, len(filtered_population))
+                    parent2 = self.tournament_selection(filtered_population, filtered_scores, tournament_size)
                 
                 child1, child2 = self.crossover(parent1, parent2)
                 child1 = self.mutate(child1)
                 child2 = self.mutate(child2)
+
+                child1 = self.repair_day(child1)
+                child2 = self.repair_day(child2)
+
+                child1 = self.repair_session_start(child1, preprocessed_df1, preprocessed_df2)
+                child2 = self.repair_session_start(child2, preprocessed_df1, preprocessed_df2)
                 
                 child1_course_id, child1_group_id = child1.split('-')[0], child1.split('-')[1]
                 child2_course_id, child2_group_id = child2.split('-')[0], child2.split('-')[1]
@@ -236,24 +309,10 @@ class GeneticAlgorithm:
                     next_gen_set.add((child2_course_id, child2_group_id))
                     selected_parents.add((parent2.split('-')[0], parent2.split('-')[1]))
 
-                # Extract course_id and group_id for the children
-                # child1_course_id, child1_group_id = child1.split('-')[0], child1.split('-')[1]
-                # child2_course_id, child2_group_id = child2.split('-')[0], child2.split('-')[1]
-
-                # if (child1_course_id, child1_group_id) not in next_gen_set:
-                #     next_generation.append(child1)
-                #     next_gen_set.add((child1_course_id, child1_group_id))
-                #     selected_parents.add(parent1)
-
-                # if len(next_generation) < self.population_size and (child2_course_id, child2_group_id) not in next_gen_set:
-                #     next_generation.append(child2)
-                #     next_gen_set.add((child2_course_id, child2_group_id))
-                #     selected_parents.add(parent2)
-
             population = next_generation
         
         # Plot the fitness scores over generations
-        plt.plot(range(max_generations), fitness_scores, marker='o')
+        plt.plot(range(len(fitness_scores)), fitness_scores, marker='o')
         plt.title('Fitness Score Over Generations')
         plt.xlabel('Generation')
         plt.ylabel('Fitness Score')
