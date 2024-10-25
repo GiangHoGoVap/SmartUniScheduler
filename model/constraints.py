@@ -11,7 +11,7 @@ class Constraint:
     def evaluate(self, course_id, chromosome):
         """
         Evaluate the constraint on a given chromosome for a given course_id.
-        Should return a penalty (for hard constraints) or a fitness score (for soft constraints).
+        Should return number of violations (for hard constraints) or a fitness score (for soft constraints).
         """
         return 0
 
@@ -21,12 +21,10 @@ class ValidDayConstraint(Constraint):
 
     def evaluate(self, course_id, chromosome):
         # chromosome = '11010111011111111011111'
-        penalty = 0
         day = int(chromosome[:3], 2)
         if day not in VALID_DAY:
-            penalty += 100
             self.violations += 1
-        return -penalty 
+        return self.violations 
 
 class SessionStartConstraint(Constraint):
     def __init__(self, course_info):
@@ -34,38 +32,32 @@ class SessionStartConstraint(Constraint):
         self.course_info = course_info
 
     def evaluate(self, course_id, chromosome):
-        penalty = 0
         session_start = int(chromosome[3:7], 2)
         for index, row in self.course_info.iterrows():
             if row['course_id'] == course_id:
                 if session_start + row['num_sessions'] - 1 not in VALID_SESSION:
-                    penalty += 100
                     self.violations += 1
-        return -penalty
+        return self.violations
 
 class LunchBreakConstraint(Constraint):
     def __init__(self):
         super().__init__('Lunch break constraint')
 
     def evaluate(self, course_id, chromosome):
-        penalty = 0
         session_start = int(chromosome[3:7], 2)
         if session_start == 6:
-            penalty += 25
             self.violations += 1
-        return -penalty
+        return self.violations
     
 class MidtermBreakConstraint(Constraint):
     def __init__(self):
         super().__init__('Midterm break constraint')
 
     def evaluate(self, course_id, chromosome):
-        penalty = 0
         weeks = list(chromosome[7:])
         if weeks[7] == '1':
-            penalty += 25
             self.violations += 1
-        return -penalty
+        return self.violations
     
 class CourseDurationConstraint(Constraint):
     def __init__(self, course_info):
@@ -73,15 +65,13 @@ class CourseDurationConstraint(Constraint):
         self.course_info = course_info
 
     def evaluate(self, course_id, chromosome):
-        penalty = 0
         weeks = list(chromosome[7:])
         total_duration = sum([int(week) for week in weeks])
         for index, row in self.course_info.iterrows():
             if row['course_id'] == course_id:
                 if total_duration != row['num_weeks']:
-                    penalty += 50 * abs(row['num_weeks'] - total_duration)
                     self.violations += 1
-        return -penalty
+        return self.violations
 
 class CourseSameSemesterConstraint(Constraint):
     def __init__(self, course_info):
@@ -92,8 +82,6 @@ class CourseSameSemesterConstraint(Constraint):
         pass
 
     def evaluate_population(self, population):
-        penalty = 0
-        
         for semester in range(1, 9):
             # semester = 1 --> course_list = ['CO1025', 'CO1023']
             course_list = self.course_info[self.course_info['semester'] == semester]['course_id'].tolist()
@@ -135,10 +123,9 @@ class CourseSameSemesterConstraint(Constraint):
                                 for j in range(i + 1, len(weeks_from_day_duplicates)):
                                     if weeks_from_day_duplicates[i] == weeks_from_day_duplicates[j]:
                                         # print(f'Course {course_ids_from_day_duplicates[i]}-{group_id} and {course_ids_from_day_duplicates[j]}-{group_id} have overlapping sessions')
-                                        penalty += 25
                                         self.violations += 1
         
-        return -penalty
+        return self.violations
 
 class ConstraintsManager:
     def __init__(self):
@@ -148,21 +135,21 @@ class ConstraintsManager:
         self.constraints.append(constraint)
 
     def evaluate(self, course_id, chromosome):
-        total_score = 0
+        total_violations = 0
         for constraint in self.constraints:
-            score = constraint.evaluate(course_id, chromosome)
-            if score is not None:
-                total_score += score
-        return total_score
+            violations = constraint.evaluate(course_id, chromosome)
+            if violations is not None:
+                total_violations += violations
+        return 1 - 1 / (1 + total_violations)
 
     def evaluate_population(self, population):
-        total_score = 0
+        total_violations = 0
         for constraint in self.constraints:
             if constraint.name == 'Course same semester constraint':
-                score = constraint.evaluate_population(population)
-                if score is not None:
-                    total_score += score
-        return total_score
+                violations = constraint.evaluate_population(population)
+                if violations is not None:
+                    total_violations += violations
+        return 1 - 1 / (1 + total_violations)
 
     def reset_violations(self):
         for constraint in self.constraints:

@@ -8,7 +8,7 @@ sys.path.append('model')
 from GA import GeneticAlgorithm
 from constraints import ValidDayConstraint, SessionStartConstraint, LunchBreakConstraint, MidtermBreakConstraint, CourseDurationConstraint, CourseSameSemesterConstraint, ConstraintsManager
 
-SHEET_FILE_NAME = 'Dự kiến SVMT_241 data.xlsx'
+SHEET_FILE_NAME = 'Dự kiến SVMT_242 data.xlsx'
 SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT'] 
 
 PROGRAM_ID = {

@@ -22,11 +22,11 @@ class GeneticAlgorithm:
         for _ in range(4):  # Small number of hill climbing steps
             mutated_individual = self.mutate(best_individual)
             fitness = self.calculate_fitness(course_id, mutated_individual.split('-')[2])
-            if fitness > best_fitness:
+            if fitness < best_fitness:
                 best_fitness = fitness
                 best_individual = mutated_individual
 
-        return best_individual
+        return best_individual, best_fitness
 
     def adapt_parameters(self, generation, max_generations):
         self.crossover_rate = self.initial_cross_rate * (1 - generation / max_generations)
@@ -113,13 +113,13 @@ class GeneticAlgorithm:
         tournament_scores = [scores[i] for i in tournament_indices]
 
         # Choose the best individual from the tournament
-        best_index = tournament_scores.index(max(tournament_scores))
+        best_index = tournament_scores.index(min(tournament_scores))
         return tournament_individuals[best_index]
 
 
     def calculate_fitness(self, course_id, individual):
         # individual = '11010111011111111011111'
-        return self.constraints_manager.evaluate(course_id, individual) 
+        return self.constraints_manager.evaluate(course_id, individual) * 0.5
 
     def evaluate_population(self, population):
         scores = []
@@ -141,7 +141,7 @@ class GeneticAlgorithm:
             if len(individuals) > 1:
                 print(f"Duplicate course_id and group_id found: {key} with individuals: {individuals}")
 
-        population_score = self.constraints_manager.evaluate_population(population)
+        population_score = self.constraints_manager.evaluate_population(population) * 0.5
         for i in range(len(scores)):
             scores[i] += population_score
 
@@ -221,7 +221,7 @@ class GeneticAlgorithm:
     def run(self, prefix_chromosomes, chromosome_length, max_generations, preprocessed_df1, preprocessed_df2):
         population = self.init_population(prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2)
         best_population = {}
-        best_population_score = float('-inf')
+        best_population_score = float('+inf')
         fitness_scores = []
 
         for i in range(max_generations):
@@ -234,7 +234,7 @@ class GeneticAlgorithm:
             violations = self.constraints_manager.count_violations(population)
             print(f'Generation {i}: {violations}')
             
-            if fitness_score > best_population_score:
+            if fitness_score < best_population_score:
                 # Update the best population across all generations
                 for individual in population:
                     course_id, group_id = individual.split('-')[0], individual.split('-')[1]
@@ -256,10 +256,10 @@ class GeneticAlgorithm:
                 if random.random() < self.hill_climbing_prob:  # Only apply hill climbing with some probability
                     individual = population[idx]
                     course_id = individual.split('-')[0]
-                    population[idx] = self.hill_climbing(individual, course_id)
+                    population[idx], scores[idx] = self.hill_climbing(individual, course_id)
 
-            # Sort the population by fitness in descending order
-            sorted_population, sorted_scores = zip(*sorted(zip(population, scores), reverse=True))
+            # Sort the population by fitness in ascending order
+            sorted_population, sorted_scores = zip(*sorted(zip(population, scores)))
             next_generation = []
             next_generation.extend(sorted_population[:self.elitism])
 
