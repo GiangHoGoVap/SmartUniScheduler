@@ -67,39 +67,38 @@
 
 <!-- ABOUT THE PROJECT -->
 
-## About The Project
+<!-- ## About The Project
 
 <div align="center">
   <img src="public/project_overview.gif" alt="Project overview">
-</div>
+</div> -->
 
-### Built With
+<!-- ### Built With
 
 -   [![PHP][php.net]][php-url]
 -   [![MYSQL][mysql.com]][mysql-url]
 -   [![Bootstrap][bootstrap.com]][bootstrap-url]
--   [![JQuery][jquery.com]][jquery-url]
+-   [![JQuery][jquery.com]][jquery-url] -->
 
 <!-- GETTING STARTED -->
 
 ## Getting Started
 
-This is a job portal website that we use Bootstrap, PHP to create the UI and interaction with the database - MySQL.
+This is a university scheduling project using Genetic Algorithm (GA).
 
 ### Prerequisites
 
-For convenience, I recommend you install [MAMP](https://www.mamp.info/en/mac/) (iOS) or [XAMPP](https://www.apachefriends.org/) (Windows) to run the localhost. <br>
-To run this project, modify your document root in MAMP:
+To run this project, type this command in terminal:
 
 ```sh
-../job-portal/public
+python3 -u "{path_to_main.py}"
 ```
 
 <!-- USAGE EXAMPLES -->
 
 ## Usage
 
-This project is built from scratch so you can easily customize your own website.
+This project is built from scratch so you can easily customize your own university scheduling.
 
 _For more discussions about this project, please send me [mail](mailto:minhtam27022001@gmail.com)_
 
