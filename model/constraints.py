@@ -10,10 +10,6 @@ class Constraint:
         self.violations = 0
 
     def evaluate(self, individual: Individual):
-        """
-        Evaluate the constraint on a given chromosome for a given course_id.
-        Should return number of violations (for hard constraints) or a fitness score (for soft constraints).
-        """
         return 0
 
 class ValidDayConstraint(Constraint):

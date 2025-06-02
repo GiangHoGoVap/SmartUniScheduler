@@ -17,7 +17,7 @@ from constraints import (ValidDayConstraint,
                          ConstraintsManager)
 
 SHEET_FILE_NAME = 'Dự kiến SVMT_242 data.xlsx'
-SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT', 'Đề xuất', 'Phụ trách'] 
+SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT'] 
 
 PROGRAM_ID = {
     "Chương trình giảng dạy bằng tiếng Anh": "CC",
@@ -118,8 +118,8 @@ def encode(data):
 def decode_lecture(best_individuals):
     # best_individuals = {
     #   'CO2003': {
-    #       'L01': ['CO2003-L01-11010101100001110000011', 10], 
-    #       'CN02': ['CO2003-CN02-11010101100001110000011', 20]
+    #       'L01': ['CO2003-L01-11010101100001110000011', 0.1], 
+    #       'CN02': ['CO2003-CN02-11010101100001110000011', 0.2]
     #   }
     # }
     decoded_population = []
@@ -253,23 +253,6 @@ def main():
     df = read_excel_file(file_path, SHEET_NAMES[0])
     df_khmt = read_excel_file(file_path, SHEET_NAMES[1])
     df_ktmt = read_excel_file(file_path, SHEET_NAMES[2])
-
-    # df_suggested = read_excel_file(file_path, SHEET_NAMES[3])
-    # binary_vector = df_suggested.drop(columns='Ngày').values.flatten()
-    # binary_vector_list = binary_vector.tolist()
-
-    # df_instructors = read_excel_file(file_path, SHEET_NAMES[4])
-    # # Initialize the data structure
-    # instructor_schedule_info = defaultdict(lambda: {'courses': [], 'fuzzy': None})
-
-    # # Add course and group info
-    # for _, row in df_instructors.iterrows():
-    #     mscb = int(row['MSCB'])
-    #     course_id = row['Tên môn học']
-    #     group_id = row['Mã nhóm']
-        
-    #     instructor_schedule_info[mscb]['courses'].append((course_id, group_id))
-    #     instructor_schedule_info[mscb]['fuzzy'] = binary_vector_list
     
     preprocessed_df = preprocess_data(df, 0)
     preprocessed_df_khmt = preprocess_data(df_khmt, 1)  

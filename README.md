@@ -37,9 +37,9 @@
     <br />
     <a href="#about-the-project">View Demo</a>
     ·
-    <a href="https://github.com/GiangHoGoVap/job-portal/issues">Report Bug</a>
+    <a href="https://github.com/GiangHoGoVap/smartunischeduler/issues">Report Bug</a>
     ·
-    <a href="https://github.com/GiangHoGoVap/job-portal/pulls">Request Feature</a>
+    <a href="https://github.com/GiangHoGoVap/smartunischeduler/pulls">Request Feature</a>
   </p>
 </div>
 
@@ -128,14 +128,14 @@ Project Link: [https://github.com/GiangHoGoVap/SmartUniScheduler](https://github
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
-[contributors-shield]: https://img.shields.io/github/contributors/GiangHoGoVap/job-portal.svg?style=for-the-badge
-[contributors-url]: https://github.com/GiangHoGoVap/job-portal/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/GiangHoGoVap/job-portal.svg?style=for-the-badge
-[forks-url]: https://github.com/GiangHoGoVap/job-portal/network/members
-[stars-shield]: https://img.shields.io/github/stars/GiangHoGoVap/job-portal.svg?style=for-the-badge
-[stars-url]: https://github.com/GiangHoGoVap/job-portal/stargazers
-[issues-shield]: https://img.shields.io/github/issues/GiangHoGoVap/job-portal.svg?style=for-the-badge
-[issues-url]: https://github.com/GiangHoGoVap/job-portal/issues
+[contributors-shield]: https://img.shields.io/github/contributors/GiangHoGoVap/smartunischeduler.svg?style=for-the-badge
+[contributors-url]: https://github.com/GiangHoGoVap/smartunischeduler/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/GiangHoGoVap/smartunischeduler.svg?style=for-the-badge
+[forks-url]: https://github.com/GiangHoGoVap/smartunischeduler/network/members
+[stars-shield]: https://img.shields.io/github/stars/GiangHoGoVap/smartunischeduler.svg?style=for-the-badge
+[stars-url]: https://github.com/GiangHoGoVap/smartunischeduler/stargazers
+[issues-shield]: https://img.shields.io/github/issues/GiangHoGoVap/smartunischeduler.svg?style=for-the-badge
+[issues-url]: https://github.com/GiangHoGoVap/smartunischeduler/issues
 [php.net]: https://img.shields.io/badge/php-B0B3D6?style=for-the-badge&logo=php&logoColor=787CB5
 [php-url]: https://www.php.net/
 [mysql.com]: https://img.shields.io/badge/mysql-ADD8E6?style=for-the-badge&logo=mysql&logoColor=00758F
