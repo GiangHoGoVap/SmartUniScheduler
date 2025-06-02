@@ -1,14 +1,15 @@
 VALID_DAY = range(2, 8)
 VALID_SESSION = range(3, 13)
 
-from model.utils import find_duplicates, count_overlap
+from model.utils import find_duplicates, count_overlap, weeks_overlap
+from model.individual import Individual
 
 class Constraint:
     def __init__(self, name):
         self.name = name
         self.violations = 0
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         """
         Evaluate the constraint on a given chromosome for a given course_id.
         Should return number of violations (for hard constraints) or a fitness score (for soft constraints).
@@ -20,12 +21,13 @@ class ValidDayConstraint(Constraint):
         super().__init__('Valid day constraint' if not is_lab_constraint else 'Valid day lab constraint')
         self.valid_days = valid_days
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         # chromosome = '11010111011111111011111'
         self.violations = 0
-        day = int(chromosome[:4], 2)
+        day = int(individual.bitstring[:4], 2)
         if day not in self.valid_days:
             self.violations = 1
+            individual.add_violation(ValidDayConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations 
 
 class SessionStartConstraint(Constraint):
@@ -34,46 +36,48 @@ class SessionStartConstraint(Constraint):
         self.course_info = course_info
         self.is_lab_constraint = is_lab_constraint
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         # Extract session start directly from chromosome
         self.violations = 0
-        session_start = int(chromosome[4:8], 2)
+        session_start = int(individual.bitstring[4:8], 2)
         
         # Check if it's a lab constraint
         if self.is_lab_constraint:
             # Lab constraints: session start must be 2 or 8
             if session_start not in {2, 8}:
                 self.violations = 1
+                individual.add_violation(SessionStartConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         else:
             for index, row in self.course_info.iterrows():
-                if row['course_id'] == course_id:
+                if row['course_id'] == individual.course_id:
                     # Check if session start fits within valid session range
                     if session_start + row['num_sessions'] - 1 not in VALID_SESSION:
                         self.violations = 1
-        
+                        individual.add_violation(SessionStartConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
 
 class LunchBreakConstraint(Constraint):
     def __init__(self):
         super().__init__('Lunch break constraint')
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         self.violations = 0
-        session_start = int(chromosome[4:8], 2)
+        session_start = int(individual.bitstring[4:8], 2)
         if session_start == 6:
-            print(f"Course {course_id}-{group_id} violates lunch break constraint with session start at 6.")
             self.violations = 1
+            individual.add_violation(LunchBreakConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
     
 class MidtermBreakConstraint(Constraint):
     def __init__(self):
         super().__init__('Midterm break constraint')
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         self.violations = 0
-        weeks = list(chromosome[8:])
+        weeks = list(individual.bitstring[8:])
         if weeks[7] == '1':
             self.violations = 1
+            individual.add_violation(MidtermBreakConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
     
 class CourseDurationConstraint(Constraint):
@@ -82,35 +86,30 @@ class CourseDurationConstraint(Constraint):
         self.course_info = course_info
         self.is_lab_constraint = is_lab_constraint
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         # Extract course duration from chromosome
         self.violations = 0
-        weeks = list(chromosome[8:])
+        weeks = list(individual.bitstring[8:])
         total_duration = sum(int(week) for week in weeks)
 
         for index, row in self.course_info.iterrows():
-            if row['course_id'] == course_id:
+            if row['course_id'] == individual.course_id:
                 if self.is_lab_constraint:
                     expected_duration = row['num_weeks_lab']
                 else:
                     expected_duration = row['num_weeks']
                 # self.violations += abs(total_duration - expected_duration) ** 2
                 if total_duration != expected_duration:
-                    print(f"Course {course_id} has total duration {total_duration} but expected {expected_duration}")
                     self.violations = 1
-        
+                    individual.add_violation(CourseDurationConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
 
 class CourseSameSemesterConstraint(Constraint):
     def __init__(self, course_info):
-        super().__init__('Course same semester constraint')
+        super().__init__('CourseSameSemesterConstraint')
         self.course_info = course_info
-        # Precompute course lists for each semester
-        self.semester_courses = {}
-        for semester in range(1, 9):
-            self.semester_courses[semester] = set(
-                self.course_info[self.course_info['semester'] == semester]['course_id'].tolist()
-            )
+        self.semester_courses = {semester: set(course_info[course_info['semester'] == semester]['course_id'].tolist())
+                                 for semester in range(1, 9)}
 
     def evaluate_population(self, population):
         self.violations = 0
@@ -118,48 +117,43 @@ class CourseSameSemesterConstraint(Constraint):
         for semester in range(1, 9):
             course_set = self.semester_courses[semester]
             course_same_semester = {}
-            for individual in population:
-                parts = individual.split('-')
-                course_id, group_id, bitstring = parts[0], parts[1], parts[2]
-                if course_id in course_set:
-                    if group_id not in course_same_semester:
-                        course_same_semester[group_id] = []
-                    course_same_semester[group_id].append((course_id, bitstring))
+
+            for ind in population:
+                if ind.course_id in course_set:
+                    course_same_semester.setdefault(ind.group_id, []).append(ind)
 
             for group_id, individuals in course_same_semester.items():
-                course_ids = [ind[0] for ind in individuals]
-                bitstrings = [ind[1] for ind in individuals]
-                days = [int(bitstring[:4], 2) for bitstring in bitstrings]
-                session_starts = [int(bitstring[4:8], 2) for bitstring in bitstrings]
-                weeks = [tuple(bitstring[8:]) for bitstring in bitstrings]  # Convert to tuple for hashability
+                # Group by day
+                day_dict = {}
+                for ind in individuals:
+                    day = int(ind.bitstring[:4], 2)
+                    day_dict.setdefault(day, []).append(ind)
 
-                # Detect duplicate days
-                day_indices = {}
-                for idx, day in enumerate(days):
-                    if day not in day_indices:
-                        day_indices[day] = []
-                    day_indices[day].append(idx)
+                for day, same_day_inds in day_dict.items():
+                    # Extract with timing and sort
+                    slots = []
+                    for ind in same_day_inds:
+                        start = int(ind.bitstring[4:8], 2)
+                        weeks = tuple(ind.bitstring[8:])
+                        duration = self.course_info[self.course_info['course_id'] == ind.course_id]['num_sessions'].values[0]
+                        end = start + duration
+                        slots.append((start, end, ind, weeks))
 
-                # Process duplicate days
-                for day, indices in day_indices.items():
-                    if len(indices) > 1:
-                        session_starts_from_day_duplicates = [session_starts[i] for i in indices]
-                        weeks_from_day_duplicates = [weeks[i] for i in indices]
-                        course_ids_from_day_duplicates = [course_ids[i] for i in indices]
+                    # Sort by start time
+                    slots.sort(key=lambda x: x[0])
 
-                        num_sessions_from_day_duplicates = [
-                            self.course_info[self.course_info['course_id'] == course_id]['num_sessions'].values[0]
-                            for course_id in course_ids_from_day_duplicates
-                        ]
-
-                        num_overlap_cases = count_overlap(session_starts_from_day_duplicates, num_sessions_from_day_duplicates)
-                        if num_overlap_cases > 0:
-                            week_set = set()
-                            for week in weeks_from_day_duplicates:
-                                if week in week_set:
-                                    self.violations += 1
-                                else:
-                                    week_set.add(week)
+                    # Sweep for overlap
+                    for i in range(len(slots) - 1):
+                        _, end_i, ind_i, weeks_i = slots[i]
+                        for j in range(i + 1, len(slots)):
+                            start_j, end_j, ind_j, weeks_j = slots[j]
+                            if start_j >= end_i:
+                                break  # No overlap, can skip due to sorting
+                            if weeks_i == weeks_j:
+                                # Violation
+                                ind_i.add_violation(CourseSameSemesterConstraint.__name__, [ind_j.course_id])
+                                ind_j.add_violation(CourseSameSemesterConstraint.__name__, [ind_i.course_id])
+                                self.violations += 1
 
         return self.violations
 
@@ -185,35 +179,31 @@ class CourseSameSemesterLabConstraint(Constraint):
             lecture_same_semester = {}
 
             for lab in lab_population:
-                parts = lab.split('-')
-                lab_course_id, lab_group_id, lab_bitstring = parts[0], parts[2], parts[3]
+                lab_course_id, lab_group_id = lab.course_id, lab.group_id.split('-')[1]
                 if lab_course_id in course_set:
                     if lab_group_id not in lab_same_semester:
                         lab_same_semester[lab_group_id] = []
-                    lab_same_semester[lab_group_id].append((lab_course_id, lab_bitstring))
+                    lab_same_semester[lab_group_id].append(lab)
 
             for lecture in lecture_population:
-                parts = lecture.split('-')
-                lecture_course_id, lecture_group_id, lecture_bitstring = parts[0], parts[1], parts[2]
+                lecture_course_id, lecture_group_id = lecture.course_id, lecture.group_id
                 if lecture_course_id in course_set:
                     if lecture_group_id not in lecture_same_semester:
                         lecture_same_semester[lecture_group_id] = []
-                    lecture_same_semester[lecture_group_id].append((lecture_course_id, lecture_bitstring))
+                    lecture_same_semester[lecture_group_id].append(lecture)
 
             # Check violations for labs
             for group_id, labs in lab_same_semester.items():
-                lab_course_ids = [lab[0] for lab in labs]
-                lab_bitstrings = [lab[1] for lab in labs]
-                lab_days = [int(bitstring[:4], 2) for bitstring in lab_bitstrings]
-                lab_session_starts = [int(bitstring[4:8], 2) for bitstring in lab_bitstrings]
-                lab_weeks = [tuple(bitstring[8:]) for bitstring in lab_bitstrings]
+                lab_days = [int(ind.bitstring[:4], 2) for ind in labs]
+                lab_session_starts = [int(ind.bitstring[4:8], 2) for ind in labs]
+                lab_weeks = [tuple(ind.bitstring[8:]) for ind in labs]
+                lab_course_ids = [ind.course_id for ind in labs]
+                lab_room_ids = [ind.room for ind in labs]
 
                 # Detect duplicate days
                 day_indices = {}
                 for idx, day in enumerate(lab_days):
-                    if day not in day_indices:
-                        day_indices[day] = []
-                    day_indices[day].append(idx)
+                    day_indices.setdefault(day, []).append(idx)
 
                 # Process duplicate days
                 for day, indices in day_indices.items():
@@ -221,32 +211,31 @@ class CourseSameSemesterLabConstraint(Constraint):
                         lab_sessions_from_day_duplicates = [lab_session_starts[i] for i in indices]
                         lab_weeks_from_day_duplicates = [lab_weeks[i] for i in indices]
                         lab_course_ids_from_day_duplicates = [lab_course_ids[i] for i in indices]
+                        # labs_from_day_duplicates = [labs[i] for i in indices]
+                        lab_room_ids_from_day_duplicates = [lab_room_ids[i] for i in indices]
 
-                        num_sessions_from_day_duplicates = [
-                            self.course_info[self.course_info['course_id'] == course_id]['num_lab_sessions'].values[0]
-                            for course_id in lab_course_ids_from_day_duplicates
-                        ]
+                        num_sessions_from_day_duplicates = [self.course_info[self.course_info['course_id'] == course_id]['num_lab_sessions'].values[0]
+                                                            for course_id in lab_course_ids_from_day_duplicates]
 
                         num_lab_overlap_cases = count_overlap(lab_sessions_from_day_duplicates, num_sessions_from_day_duplicates)
                         if num_lab_overlap_cases > 0:
-                            week_set = set()
-                            for week in lab_weeks_from_day_duplicates:
-                                if week in week_set:
-                                    self.violations += 1
-                                else:
-                                    week_set.add(week)
+                            for i in range(len(lab_weeks_from_day_duplicates)):
+                                for j in range(i + 1, len(lab_weeks_from_day_duplicates)):
+                                    if lab_room_ids_from_day_duplicates[i] == lab_room_ids_from_day_duplicates[j] and weeks_overlap(lab_weeks_from_day_duplicates[i], lab_weeks_from_day_duplicates[j]):
+                                        # print(f"Lab {lab_course_ids_from_day_duplicates[i]} overlaps with lab {lab_course_ids_from_day_duplicates[j]} on day {day} in weeks {lab_weeks_from_day_duplicates[i]} and {lab_weeks_from_day_duplicates[j]} at room {lab_room_ids_from_day_duplicates[i]}.")
+                                        self.violations += 1
 
             # Check overlaps between labs and lectures
             for group_id, labs in lab_same_semester.items():
                 for lab in labs:
-                    lab_course_id, lab_bitstring = lab
+                    lab_course_id, lab_bitstring = lab.course_id, lab.bitstring
                     lab_day = int(lab_bitstring[:4], 2)
                     lab_session_start = int(lab_bitstring[4:8], 2)
                     lab_weeks = tuple(lab_bitstring[8:])
 
                     if group_id in lecture_same_semester:
                         for lecture in lecture_same_semester[group_id]:
-                            lecture_course_id, lecture_bitstring = lecture
+                            lecture_course_id, lecture_bitstring = lecture.course_id, lecture.bitstring
                             lecture_day = int(lecture_bitstring[:4], 2)
                             lecture_session_start = int(lecture_bitstring[4:8], 2)
                             lecture_weeks = tuple(lecture_bitstring[8:])
@@ -272,8 +261,7 @@ class LectureBeforeLabConstraint(Constraint):
         # Precompute lecture start weeks for faster lookup
         lecture_start_weeks = {}
         for lecture in lecture_population:
-            parts = lecture.split('-')
-            course_id, group_id, bitstring = parts[0], parts[1], parts[2]
+            course_id, group_id, bitstring = lecture.course_id, lecture.group_id, lecture.bitstring
             weeks = list(bitstring[8:])  # Extract weeks from the bitstring
             start_week = weeks.index('1') if '1' in weeks else -1  # Find the first week of the lecture
             lecture_start_weeks[f"{course_id}-{group_id}"] = start_week
@@ -281,8 +269,7 @@ class LectureBeforeLabConstraint(Constraint):
         # Check labs and assign penalties
         for i, lab in enumerate(lab_population):
             # Extract lab information
-            lab_parts = lab.split('-')
-            lab_course_id, lab_group_id, lab_bitstring = lab_parts[0], lab_parts[2], lab_parts[3]
+            lab_course_id, lab_group_id, lab_bitstring = lab.course_id, lab.group_id.split('-')[1], lab.bitstring
             lab_weeks = list(lab_bitstring[8:])  # Extract weeks from the bitstring
             lab_start_week = lab_weeks.index('1') if '1' in lab_weeks else -1  # Find the first week of the lab
 
@@ -305,10 +292,10 @@ class LabSessionSpacingConstraint(Constraint):
     def __init__(self):
         super().__init__('Lab session spacing constraint')
         
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         self.violations = 0
 
-        weeks = list(chromosome[8:])
+        weeks = list(individual.bitstring[8:])
         scheduled_weeks = [idx for idx, week in enumerate(weeks) if week == '1']
 
         # Check for consecutive weeks
@@ -325,10 +312,10 @@ class ConstraintsManager:
     def add_constraint(self, constraint):
         self.constraints.append(constraint)
 
-    def evaluate(self, course_id, group_id, chromosome):
+    def evaluate(self, individual: Individual):
         total_violations = 0
         for constraint in self.constraints:
-            violations = constraint.evaluate(course_id, group_id, chromosome)
+            violations = constraint.evaluate(individual)
             if violations is not None:
                 total_violations += violations
         return 1 - 1 / (1 + total_violations)
@@ -398,12 +385,11 @@ class ConstraintsManager:
             name = f"{constraint.name}_{idx}"
             if constraint.name not in {'Course same semester constraint', 'Course same semester lab constraint'}:
                 for individual in population:
-                    parts = individual.split('-')
-                    course_id = parts[0]
-                    group_id = parts[1] if len(parts) == 3 else parts[2]
-                    session_info = parts[2] if len(parts) == 3 else parts[3]
+                    course_id = individual.course_id
+                    group_id = individual.group_id if lecture_population is None else individual.group_id.split('-')[1]
+                    session_info = individual.bitstring
 
-                    violations = constraint.evaluate(course_id, group_id, session_info)
+                    violations = constraint.evaluate(individual)
                     if violations:
                         print(f"Course {course_id} violates {constraint.name} with {violations} violations.")
                         violations_dict[name] += violations

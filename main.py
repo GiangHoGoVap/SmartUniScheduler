@@ -6,6 +6,7 @@ import math
 
 import sys
 sys.path.append('model')
+from collections import defaultdict
 from GA import GeneticAlgorithm
 from constraints import (ValidDayConstraint, 
                          SessionStartConstraint, 
@@ -16,7 +17,7 @@ from constraints import (ValidDayConstraint,
                          ConstraintsManager)
 
 SHEET_FILE_NAME = 'Dự kiến SVMT_242 data.xlsx'
-SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT'] 
+SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT', 'Đề xuất', 'Phụ trách'] 
 
 PROGRAM_ID = {
     "Chương trình giảng dạy bằng tiếng Anh": "CC",
@@ -124,30 +125,26 @@ def decode_lecture(best_individuals):
     decoded_population = []
 
     for course_id, classes in best_individuals.items():
-        for group_id, list_obj in classes.items():
-            individual = list_obj[0]
-            score = list_obj[1]
-
-            parts = individual.split('-')
-            if 'CQ' in parts[1]:
-                group_code = parts[1].replace('CQ', 'L')
+        for group_id, (individual, score) in classes.items():
+            if 'CQ' in individual.group_id:
+                group_code = individual.group_id.replace('CQ', 'L')
             else:
-                group_code = parts[1]
-            bitstring = parts[2]
-            text, number = re.match(r'([a-zA-Z]+)(\d+)', parts[1]).groups() # text = 'CC', number = '01'
+                group_code = individual.group_id
+            bitstring = individual.bitstring
+            text, number = re.match(r'([a-zA-Z]+)(\d+)', individual.group_id).groups() # text = 'CC', number = '01'
             
             day = int(bitstring[:4], 2)
             session_start = int(bitstring[4:8], 2)
             available_weeks = list(bitstring[8:])
             
             decoded_individual = {
-                'Mã môn học': parts[0],
-                'Tên môn học': COURSE_ID_TO_NAME[parts[0]],
+                'Mã môn học': individual.course_id,
+                'Tên môn học': COURSE_ID_TO_NAME[individual.course_id],
                 'Loại hình lớp': REVERSE_PROGRAM_ID[text],
                 'Mã nhóm': group_code,
                 'Thứ': day,
                 'Tiết BD': session_start,
-                'Loại phòng': ROOM_TYPE_ID[parts[0]],
+                'Loại phòng': ROOM_TYPE_ID[individual.course_id],
                 'Điểm': score
             }
 
@@ -170,30 +167,26 @@ def decode_lab(best_individuals):
     # }
     decoded_population = []
     
-    for course_id, classes in best_individuals.items():
-        for group_id, labs in classes.items():
-            for lab_type, individual_data in labs.items():
-                individual = individual_data[0]  # Extract encoded string
-                score = individual_data[1]  # Extract fitness score
-                
-                parts = individual.split('-')
-                if 'CQ' in parts[2]:
-                    group_code = parts[2].replace('CQ', 'L')
+    for course_id, groups in best_individuals.items():
+        for group_id, lab_dict in groups.items():
+            for lab_type, (individual, score) in lab_dict.items():
+                if 'CQ' in individual.group_id.split('-')[1]:
+                    group_code = individual.group_id.split('-')[1].replace('CQ', 'L')
                 else:
-                    group_code = parts[2]
-                bitstring = parts[3]
-                text, number = re.match(r'([a-zA-Z]+)(\d+)', parts[2]).groups()
+                    group_code = individual.group_id.split('-')[1]
+                bitstring = individual.bitstring
+                text, number = re.match(r'([a-zA-Z]+)(\d+)', individual.group_id.split('-')[1]).groups()
                 
                 day = int(bitstring[:4], 2)
                 session_start = int(bitstring[4:8], 2)
                 available_weeks = list(bitstring[8:])
                 
                 decoded_individual = {
-                    'Mã môn học': parts[0],
-                    'Tên môn học': COURSE_ID_TO_NAME.get(parts[0], 'Unknown'),
+                    'Mã môn học': individual.course_id,
+                    'Tên môn học': COURSE_ID_TO_NAME.get(individual.course_id, 'Unknown'),
                     'Loại hình lớp': REVERSE_PROGRAM_ID.get(text, 'Unknown'),
                     'Mã nhóm': group_code,
-                    'Loại phòng': ROOM_TYPE_ID.get(parts[0], 'Unknown'),
+                    'Phòng học': individual.room,
                     'Thứ': day,
                     'Tiết BD': session_start,
                     'Điểm': score,
@@ -212,7 +205,7 @@ def initialize_constraints(preprocessed_khmt, preprocessed_ktmt, is_lab=False):
     constraints_manager.add_constraint(MidtermBreakConstraint())
 
     if is_lab:
-        constraints_manager.add_constraint(ValidDayConstraint(range(2, 9), True))
+        constraints_manager.add_constraint(ValidDayConstraint(range(2, 8), True))
         constraints_manager.add_constraint(SessionStartConstraint(preprocessed_khmt, True))
         constraints_manager.add_constraint(SessionStartConstraint(preprocessed_ktmt, True))
         constraints_manager.add_constraint(CourseDurationConstraint(preprocessed_khmt, True))
@@ -222,7 +215,7 @@ def initialize_constraints(preprocessed_khmt, preprocessed_ktmt, is_lab=False):
         constraints_manager.add_constraint(LectureBeforeLabConstraint())
         constraints_manager.add_constraint(LabSessionSpacingConstraint())
     else:
-        constraints_manager.add_constraint(ValidDayConstraint(range(2, 8)))
+        constraints_manager.add_constraint(ValidDayConstraint(range(2, 7)))
         constraints_manager.add_constraint(SessionStartConstraint(preprocessed_khmt))
         constraints_manager.add_constraint(SessionStartConstraint(preprocessed_ktmt))
         constraints_manager.add_constraint(LunchBreakConstraint())
@@ -260,6 +253,23 @@ def main():
     df = read_excel_file(file_path, SHEET_NAMES[0])
     df_khmt = read_excel_file(file_path, SHEET_NAMES[1])
     df_ktmt = read_excel_file(file_path, SHEET_NAMES[2])
+
+    # df_suggested = read_excel_file(file_path, SHEET_NAMES[3])
+    # binary_vector = df_suggested.drop(columns='Ngày').values.flatten()
+    # binary_vector_list = binary_vector.tolist()
+
+    # df_instructors = read_excel_file(file_path, SHEET_NAMES[4])
+    # # Initialize the data structure
+    # instructor_schedule_info = defaultdict(lambda: {'courses': [], 'fuzzy': None})
+
+    # # Add course and group info
+    # for _, row in df_instructors.iterrows():
+    #     mscb = int(row['MSCB'])
+    #     course_id = row['Tên môn học']
+    #     group_id = row['Mã nhóm']
+        
+    #     instructor_schedule_info[mscb]['courses'].append((course_id, group_id))
+    #     instructor_schedule_info[mscb]['fuzzy'] = binary_vector_list
     
     preprocessed_df = preprocess_data(df, 0)
     preprocessed_df_khmt = preprocess_data(df_khmt, 1)  
@@ -275,7 +285,7 @@ def main():
 
     # Run GeneticAlgorithm for lectures
     chromosome_length = 24  # 4 bits for day, 4 bits for session_start, 16 bits for weeks
-    max_generations = 500
+    max_generations = 100
 
     population_lecture = run_genetic_algorithm(chromosomes_df, 
                                                lecture_population_size, 

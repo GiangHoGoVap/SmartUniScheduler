@@ -1,10 +1,55 @@
 import random
 import matplotlib.pyplot as plt
+from model.individual import Individual
+from utils import get_same_semester_courses, get_lecture_by_course_group, get_lectures_by_courses, create_non_conflicting_time
 
 VALID_SESSION = range(3, 13)
 
+ROOMS = {
+    'CO3093': {
+        'CS1': ['C6-102', 'C6-103', 'C6-104', 'C6-509'],
+        'CS2': ['H6-603', 'H6-604', 'H6-702', 'H6-703', 'H6-708']
+    },
+    'CO2013': {
+        'CS1': ['C6-102', 'C6-103', 'C6-104', 'C6-509'],
+        'CS2': ['H6-701', 'H6-702', 'H6-703', 'H6-707', 'H6-603', 'H6-604']
+    },
+    'CO2007': {
+        'CS1': ['C5-202'],
+        'CS2': ['H6-601', 'H6-605']
+    },
+    'CO2003': {
+        'CS1': ['C6-102', 'C6-103', 'C6-104', 'C6-509'],
+        'CS2': ['H6-701', 'H6-702', 'H6-703', 'H6-707', 'H6-603', 'H6-604']
+    },
+    'CO1023': {
+        'CS1': ['C5-202', 'C6-105'],
+        'CS2': ['H6-601', 'H6-605']
+    },
+    'CO3053': {
+        'CS1': ['C6-105'],
+        'CS2': ['H6-601']
+    },
+    'CO2017': {
+        'CS1': ['C6-102', 'C6-103', 'C6-104', 'C6-509'],
+        'CS2': ['H6-701', 'H6-702', 'H6-703', 'H6-707', 'H6-603', 'H6-604']
+    },
+    'CO3009': {
+        'CS1': ['C5-202', 'C6-105'],
+        'CS2': ['H6-601']
+    },
+    'CO2037': {
+        'CS1': ['C5-202', 'C6-105'],
+        'CS2': ['H6-601', 'H6-605']
+    },
+    'CO1005': {
+        'CS1': ['C6-102', 'C6-103', 'C6-104', 'C6-509'],
+        'CS2': ['H6-701', 'H6-702', 'H6-703', 'H6-707', 'H6-603', 'H6-604']
+    }
+}
+
 class GeneticAlgorithm:
-    def __init__(self, population_size, crossover_rate, mutation_rate, elitism, constraints_manager, hill_climbing_prob=0.3):
+    def __init__(self, population_size, crossover_rate, mutation_rate, elitism, constraints_manager):
         self.population_size = population_size
         self.initial_cross_rate = crossover_rate
         self.initial_mutation_rate = mutation_rate
@@ -12,43 +57,10 @@ class GeneticAlgorithm:
         self.mutation_rate = mutation_rate
         self.elitism = elitism
         self.constraints_manager = constraints_manager
-        self.hill_climbing_prob = hill_climbing_prob
-
-    def hill_climbing(self, individual):
-        """Applies hill climbing to slightly improve an individual."""
-        best_fitness = self.calculate_fitness(individual.split('-')[0], individual.split('-')[2])
-        best_individual = individual
-        
-        for _ in range(4):  # Small number of hill climbing steps
-            mutated_individual = self.mutate(best_individual, mutation_rate=0.3)
-            fitness = self.calculate_fitness(mutated_individual.split('-')[0], mutated_individual.split('-')[2])
-            if fitness < best_fitness:
-                best_fitness = fitness
-                best_individual = mutated_individual
-
-        return best_individual
 
     def adapt_parameters(self, generation, max_generations):
         self.crossover_rate = self.initial_cross_rate * (1 - generation / max_generations)
         self.mutation_rate = self.initial_mutation_rate * (generation / max_generations)
-
-    # def _generate_population(self, prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2, is_lab=False, is_high_quality=False):
-    #     population = []  # List to store individuals
-        
-    #     for i in range(self.population_size):
-    #         prefix = str(prefix_chromosomes[i])
-            
-    #         # Determine individual type (high-quality or random)
-    #         if is_high_quality and i < self.population_size // 2:
-    #             individual = prefix + "-" + self.create_high_quality_individual(prefix_chromosomes[i], chromosome_length, preprocessed_df1, preprocessed_df2)
-    #         elif is_lab:
-    #             individual = prefix + "-" + self.create_individual(chromosome_length)
-    #         else:
-    #             individual = prefix + "-" + self.create_individual(chromosome_length)
-            
-    #         population.append(individual)
-
-    #     return population
 
     def _generate_population(self, prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2, is_lab, lecture_population=None):
         population = []  # List to store individuals
@@ -56,148 +68,123 @@ class GeneticAlgorithm:
         for i in range(self.population_size):
             prefix = str(prefix_chromosomes[i])
             
-            # Determine individual type (high-quality or random)
-            if is_lab == False:
-                individual = prefix + "-" + self.create_high_quality_individual(prefix_chromosomes[i], chromosome_length, preprocessed_df1, preprocessed_df2)
+            if not is_lab:
+                individual = self.create_high_quality_individual(prefix, chromosome_length, preprocessed_df1, preprocessed_df2)
             else:
-                individual = prefix + "-" + self.create_high_quality_individual_lab(prefix_chromosomes[i], chromosome_length, preprocessed_df1, preprocessed_df2, lecture_population)
+                individual = self.create_high_quality_individual_lab(prefix, chromosome_length, preprocessed_df1, preprocessed_df2, lecture_population)
             
             population.append(individual)
 
         return population
 
     def init_population(self, prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2):
-        # Initialize population with high-quality individuals first and then random ones
-        # population = ['CO1007-CC01-01101011011111110111111', 'CO2003-CN01-11010111011111111011111']
         return self._generate_population(prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2, is_lab=False)
 
     def init_lab_population(self, prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2, lecture_population):
-        # Initialize lab population with random individuals
-        # population = ['CO1005-LAB1-CC01-01101011011111110111111', 'CO1005-LAB2-CC01-01101011011111110111111']
         return self._generate_population(prefix_chromosomes, chromosome_length, preprocessed_df1, preprocessed_df2, is_lab=True, lecture_population=lecture_population)
 
     def create_high_quality_individual(self, prefix_chromosome, chromosome_length, preprocessed_df1, preprocessed_df2):
         first_part = []
-        
-        # First 4 characters from 2 to 7 (in binary form)
-        first_4_bits = format(random.randint(2, 7), '04b')
+
+        # First 4 bits: day
+        first_4_bits = format(random.randint(2, 6), '04b')
         first_part.extend(first_4_bits)
-        
-        # Next 4 characters from 2 to 10 (in binary form)
+
+        # Next 4 bits: session start
         next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
         course_id = prefix_chromosome.split('-')[0]
+        group_id = prefix_chromosome.split('-')[1]  # e.g., "L01"
 
-        for index, row in preprocessed_df1.iterrows():
-            if row['course_id'] == course_id:
-                while int(next_4_bits, 2) + row['num_sessions'] - 1 not in VALID_SESSION:
-                    if row['num_sessions'] == 3:
-                        next_4_bits = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
-                    else:
+        # Adjust for session validity
+        for df in [preprocessed_df1, preprocessed_df2]:
+            for _, row in df.iterrows():
+                if row['course_id'] == course_id:
+                    while int(next_4_bits, 2) + row['num_sessions'] - 1 not in VALID_SESSION:
                         next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
 
-        for index, row in preprocessed_df2.iterrows():
-            if row['course_id'] == course_id:
-                while int(next_4_bits, 2) + row['num_sessions'] - 1 not in VALID_SESSION:
-                    if row['num_sessions'] == 3:
-                        next_4_bits = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
-                    else:
-                        next_4_bits = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
-        
         first_part.extend(next_4_bits)
 
-        # Option 1: Generate random for week bitstring
-        # remaining_length = chromosome_length - 16 - len(first_part)
-        # first_part.extend(random.choice(['0', '1']) for _ in range(remaining_length))
+        # Week availability: 16 bits with '0' in the middle for test
+        week_bits = ['1'] * 16
+        week_bits[-9] = '0'
 
-        # Option 2: Generate bitstring with 1s for the first 15 weeks
-        last_part = ['1'] * 16
-        last_part[-9] = '0'  
+        full_bitstring = ''.join(first_part + week_bits)
 
-        bitstring = first_part + last_part
-        return ''.join(bitstring)
+        return Individual(course_id, group_id, full_bitstring, individual_type='lecture')
 
     def create_high_quality_individual_lab(self, prefix_chromosome, chromosome_length, preprocessed_df1, preprocessed_df2, lecture_population):
-        first_part = []
-
-        # First 4 characters from 2 to 7 (in binary form) -> Represents the day
-        first_4_bits = format(random.randint(2, 7), '04b')
-        first_part.extend(first_4_bits)
-
-        # Next 4 characters (session start time) -> Allowed session starts: 2 or 8
-        next_4_bits = format(random.choice([2, 8]), '04b')
-        first_part.extend(next_4_bits)
-
-        # Extract course_id and group_id
         course_id, lab_id, group_id = prefix_chromosome.split('-')[:3]
 
-        # Default lab duration (weeks)
-        num_weeks_lab = 0  
+        first_part = []
 
-        # Retrieve lab duration from preprocessed_df1 if available
-        for index, row in preprocessed_df1.iterrows():
-            if row['course_id'] == course_id:
-                num_weeks_lab = row['num_weeks_lab']
-                break
+        same_semester_courses = get_same_semester_courses(course_id, preprocessed_df1, preprocessed_df2)
+        own_lecture = get_lecture_by_course_group(lecture_population, course_id, group_id)
+        same_semester_lectures = get_lectures_by_courses(lecture_population, same_semester_courses)
 
-        # Retrieve lab duration from preprocessed_df2 if available
-        for index, row in preprocessed_df2.iterrows():
-            if row['course_id'] == course_id:
-                num_weeks_lab = row['num_weeks_lab']
-                break
-        
-        # Determine the corresponding lecture start week (Lecture always starts at week 1)
+        time_bits = create_non_conflicting_time(own_lecture, same_semester_lectures)
+
+        if time_bits is None:
+            return None  # Could not find a valid non-overlapping slot
+
+        first_part.extend(time_bits)
+
+        num_weeks_lab = 0
+        for df in [preprocessed_df1, preprocessed_df2]:
+            for _, row in df.iterrows():
+                if row['course_id'] == course_id:
+                    num_weeks_lab = row['num_weeks_lab']
+                    break
+
+        # Find lecture's starting week
         lecture_start_week = 0
         for lecture in lecture_population:
-            lecture_parts = lecture.split('-')
-            lecture_course_id, lecture_group_id, lecture_bitstring = lecture_parts[0], lecture_parts[1], lecture_parts[2]
+            lecture_course_id = lecture.course_id
+            lecture_group_id = lecture.group_id
+            lecture_bitstring = lecture.bitstring
+
             if lecture_course_id == course_id and lecture_group_id == group_id:
                 lecture_weeks = list(lecture_bitstring[8:])
                 if '1' in lecture_weeks:
-                    lecture_start_week = lecture_weeks.index('1')  # First occurrence of '1' in lecture schedule
+                    lecture_start_week = lecture_weeks.index('1')
                 break
 
-        # Generate valid lab schedule ensuring:
-        # 1. H8: Lab starts at least 4 weeks after lecture
-        # 2. H9: No consecutive week scheduling
+        # Weeks available (at least 4 after lecture start)
+        min_start_week = lecture_start_week + 3
+        available_weeks = [w for w in range(min_start_week, 16) if w != 7]
 
-        min_start_week = lecture_start_week + 3  # Ensuring lab starts at least 4 weeks after lecture
-        available_weeks = [week for week in range(min_start_week, 16) if week != 7]  # Available weeks from min_start_week to week 16 (exlcude week 8)
-
-        # Ensure the lab weeks are spaced apart (H9)
         last_part = ['0'] * 16
-
         selected_weeks = []
 
-        # Step 1: Select the first week randomly
+        if not available_weeks:
+            return None  # No valid weeks available
+
         first_week = random.choice(available_weeks)
         selected_weeks.append(first_week)
         available_weeks.remove(first_week)
 
-        # Step 2: Determine parity (even/odd) based on the first selection
-        if first_week % 2 == 0:
-            available_weeks = [w for w in available_weeks if w % 2 == 0]  # Only even weeks
-        else:
-            available_weeks = [w for w in available_weeks if w % 2 != 0]  # Only odd weeks
+        # Enforce parity (even/odd spacing)
+        parity = first_week % 2
+        available_weeks = [w for w in available_weeks if w % 2 == parity]
 
-        # Step 3: Select the remaining weeks while ensuring non-consecutive selection
-        while len(selected_weeks) < num_weeks_lab:
-            if not available_weeks:  # Prevent infinite loop
-                break
-
+        while len(selected_weeks) < num_weeks_lab and available_weeks:
             week = random.choice(available_weeks)
             selected_weeks.append(week)
             available_weeks.remove(week)
 
-        # Assign '1' to selected lab weeks
         for week in selected_weeks:
             last_part[week] = '1'
 
-        # Combine parts into a bitstring
-        bitstring = first_part + last_part
-        return ''.join(bitstring)
+        bitstring = ''.join(first_part + last_part)
 
-    def create_individual(self, chromosome_length):
-        return ''.join(str(random.randint(0, 1)) for _ in range(chromosome_length))
+        room_type = 'CS1' if group_id.startswith('CC') or group_id.startswith('CN') else 'CS2'
+        room_list = ROOMS.get(course_id, {}).get(room_type, [])
+
+        if not room_list:
+            raise ValueError(f"No rooms available for course {course_id} with group type {room_type}")
+
+        room_id = random.choice(room_list)
+
+        return Individual(course_id=course_id, group_id=f"{lab_id}-{group_id}", bitstring=bitstring, individual_type='lab', room=room_id)
 
     # Roulette wheel selection
     def roulette_wheel_selection(self, population, scores):
@@ -226,9 +213,8 @@ class GeneticAlgorithm:
         return tournament_individuals[best_index]
 
 
-    def calculate_fitness(self, course_id, group_id, individual):
-        # individual = '11010111011111111011111'
-        fitness = self.constraints_manager.evaluate(course_id, group_id, individual)
+    def calculate_fitness(self, individual):
+        fitness = self.constraints_manager.evaluate(individual)
         return fitness * 0.5
 
     def _evaluate_population_common(self, population, is_lab=False, lecture_population=None):
@@ -236,16 +222,10 @@ class GeneticAlgorithm:
         course_group_tracker = {}
         
         for individual in population:
-            # Split based on whether it's a regular or lab population
-            parts = individual.split('-')
-            if is_lab:
-                course_id, lab_id, group_id, bitstring = parts[0], parts[1], parts[2], parts[3]
-                key = f"{course_id}-{lab_id}-{group_id}"
-            else:
-                course_id, group_id, bitstring = parts[0], parts[1], parts[2]
-                key = f"{course_id}-{group_id}"
-            
-            score = self.calculate_fitness(course_id, group_id, bitstring)
+            # Determine key for tracking duplicates
+            key = f"{individual.course_id}-{individual.group_id}"
+
+            score = self.calculate_fitness(individual)
             scores.append(score)
 
             self.constraints_manager.reset_violations()
@@ -265,15 +245,11 @@ class GeneticAlgorithm:
             population_score = self.constraints_manager.evaluate_population(population, is_lab, lecture_population)
         else:
             population_score = self.constraints_manager.evaluate_population(population)
-
-        print(f"Individual score: {max(scores)}")
         
         # Update scores with the population score
         for i in range(len(scores)):
             scores[i] += population_score[i] * 0.5
             scores[i] *= 1 / len(population)
-
-        print(f"Population score: {population_score[0]}")
 
         return scores
 
@@ -286,186 +262,214 @@ class GeneticAlgorithm:
         return self._evaluate_population_common(population, is_lab=True, lecture_population=_lecture_population)
 
     # Single-point crossover
-    def crossover(self, parent1, parent2):
-        parts = parent1.split('-')
-        if len(parts) == 3:
-            bitstring_length = len(parts[2])
-        else:
-            bitstring_length = len(parts[3])
+    def crossover(self, parent1: Individual, parent2: Individual):
+        bitstring1 = parent1.bitstring
+        bitstring2 = parent2.bitstring
+        bitstring_length = len(bitstring1)
+
+        assert len(bitstring1) == len(bitstring2), "Parent bitstrings must be the same length"
 
         if random.random() < self.crossover_rate:
-            # parent1 = 'CO2003-CN01-11010111011111111011111' || 'CO2003-LAB1-CN01-11010111011111111011111'
-            # MARK: - Crossover point is set to 16 to avoid the last 16 bits
-            if len(parts) == 3:
-                crossover_point = len(parent1) - bitstring_length + random.randint(1, bitstring_length - 16 - 1)
-            else:
-                crossover_point = len(parent1) - bitstring_length + random.randint(1, bitstring_length - 1)
-            child1 = parent1[:crossover_point] + parent2[crossover_point:]
-            child2 = parent2[:crossover_point] + parent1[crossover_point:]
+            # Avoid crossover within the last 16 bits (weeks)
+            safe_length = bitstring_length - 16 if parent1.individual_type == 'lecture' else bitstring_length
+            crossover_point = random.randint(1, safe_length - 1)
+
+            new_bitstring1 = bitstring1[:crossover_point] + bitstring2[crossover_point:]
+            new_bitstring2 = bitstring2[:crossover_point] + bitstring1[crossover_point:]
+
+            child1 = Individual(parent1.course_id, parent1.group_id, new_bitstring1, parent1.individual_type, parent1.room)
+            child2 = Individual(parent2.course_id, parent2.group_id, new_bitstring2, parent2.individual_type, parent2.room)
             return child1, child2
+
         return parent1, parent2
 
     def _mutate_bitstring(self, bitstring, mutation_rate, exclude_last_bits=0):
         # Mutate the bitstring, excluding the last `exclude_last_bits` bits if needed
         bitstring = list(bitstring)
         length = len(bitstring) - exclude_last_bits
-        
+
         for i in range(length):
             if random.random() < mutation_rate:
                 bitstring[i] = '1' if bitstring[i] == '0' else '0'
-        
+
         return ''.join(bitstring)
 
     # Bit-flip mutation
-    def mutate(self, individual, mutation_rate=None):
+    def mutate(self, individual: Individual, mutation_rate=None):
         if mutation_rate is None:
             mutation_rate = self.mutation_rate
 
-        # Split individual into its components
-        parts = individual.split('-')
+        mutated_bitstring = self._mutate_bitstring(individual.bitstring, mutation_rate, exclude_last_bits=16 if individual.individual_type == 'lecture' else 0)
+        mutated_individual = Individual(individual.course_id, individual.group_id, mutated_bitstring, individual.individual_type, individual.room)
 
-        if len(parts) == 3:
-            # For regular individuals
-            parts[2] = self._mutate_bitstring(parts[2], mutation_rate, exclude_last_bits=16)
+        return mutated_individual
+
+    def repair_day(self, individual: Individual):
+        bitstring = individual.bitstring
+        day = int(bitstring[:4], 2)
+
+        if individual.individual_type == 'lab':
+            valid_range = range(2, 8)  # 2 to 7 (inclusive)
         else:
-            # For lab individuals
-            parts[3] = self._mutate_bitstring(parts[3], mutation_rate)
+            valid_range = range(2, 7)  # 2 to 6 (inclusive)
 
-        return '-'.join(parts)
-
-    def repair_day(self, individual):
-        course_id, group_id, bitstring = individual.split('-')
-        day = int(bitstring[:4], 2)
-        if day < 2 or day > 7:
-            repaired_bitstring = format(random.randint(2, 7), '04b') + bitstring[4:]
-            return f"{course_id}-{group_id}-{repaired_bitstring}"
+        if day not in valid_range:
+            repaired_day = format(random.choice(valid_range), '04b')
+            repaired_bitstring = repaired_day + bitstring[4:]
+            return Individual(individual.course_id, individual.group_id, repaired_bitstring, individual.individual_type, individual.room)
+        
         return individual
 
-    def repair_day_lab(self, individual):
-        course_id, lab_id, group_id, bitstring = individual.split('-')
-        day = int(bitstring[:4], 2)
-        if day < 2 or day > 7:
-            repaired_bitstring = format(random.randint(2, 7), '04b') + bitstring[4:]
-            return f"{course_id}-{lab_id}-{group_id}-{repaired_bitstring}"
-        return individual
-
-    def repair_session_start(self, individual, preprocessed_df1, preprocessed_df2):
-        course_id, group_id, bitstring = individual.split('-')
+    def repair_session_start(self, individual: Individual, preprocessed_df1, preprocessed_df2):
+        bitstring = individual.bitstring
         session_start = int(bitstring[4:8], 2)
-        
-        # Check against preprocessed_df1
-        for index, row in preprocessed_df1.iterrows():
-            if row['course_id'] == course_id:
-                session_start_bitstring = bitstring[4:8]
-                while session_start + row['num_sessions'] - 1 not in VALID_SESSION:
-                    if row['num_sessions'] == 3:
-                        session_start_bitstring = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
-                        session_start = int(session_start_bitstring, 2)
-                    else:
-                        session_start_bitstring = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
-                        session_start = int(session_start_bitstring, 2)
-                repaired_bitstring = bitstring[:4] + session_start_bitstring + bitstring[8:]
-                return f"{course_id}-{group_id}-{repaired_bitstring}"
-        
-        # Check against preprocessed_df2
-        for index, row in preprocessed_df2.iterrows():
-            if row['course_id'] == course_id:
-                session_start_bitstring = bitstring[4:8]
-                while session_start + row['num_sessions'] - 1 not in VALID_SESSION:
-                    if row['num_sessions'] == 3:
-                        session_start_bitstring = format(random.choice([2, 3, 4, 7, 8, 9, 10, 11]), '04b')
-                        session_start = int(session_start_bitstring, 2)
-                    else:
-                        session_start_bitstring = format(random.choice([2, 3, 4, 5, 7, 8, 9, 10, 11]), '04b')
-                        session_start = int(session_start_bitstring, 2)
-                repaired_bitstring = bitstring[:4] + session_start_bitstring + bitstring[8:]
-                return f"{course_id}-{group_id}-{repaired_bitstring}"
-        
-        return individual
 
-    def repair_session_start_lab(self, individual):
-        course_id, lab_id, group_id, bitstring = individual.split('-')
-        session_start = int(bitstring[4:8], 2)
-        if session_start not in {2, 8}:
-            session_start_bitstring = format(random.choice([2, 8]), '04b')
-            session_start = int(session_start_bitstring, 2)
-            repaired_bitstring = bitstring[:4] + session_start_bitstring + bitstring[8:]
-            return f"{course_id}-{lab_id}-{group_id}-{repaired_bitstring}"
-        return individual
+        if individual.individual_type == 'lab':
+            # Labs can only start at session 2 or 8
+            if session_start not in {2, 8}:
+                session_start_bitstring = format(random.choice([2, 8]), '04b')
+                repaired_bitstring = bitstring[:4] + session_start_bitstring + bitstring[8:]
+                return Individual(individual.course_id, individual.group_id, repaired_bitstring, 'lab', individual.room)
+            return individual
 
-    def repair_individual_lab(self, individual, preprocessed_df1, preprocessed_df2, lecture_population):
-        course_id, lab_id, group_id, bitstring = individual.split('-')
+        # For lecture individuals: consult preprocessed_df1 and preprocessed_df2
+        num_sessions = None
+        for df in [preprocessed_df1, preprocessed_df2]:
+            row = df[df['course_id'] == individual.course_id]
+            if not row.empty:
+                num_sessions = row.iloc[0]['num_sessions']
+                break
+
+        if num_sessions is None:
+            # Cannot find session info; return unchanged
+            return individual
+
+        # Check if session + duration fits in valid sessions
+        while session_start + num_sessions - 1 not in VALID_SESSION:
+            valid_choices = [2, 3, 4, 5, 7, 8, 9, 10, 11]
+            if num_sessions == 3:
+                valid_choices.remove(5)
+            session_start = random.choice(valid_choices)
+        
+        session_start_bitstring = format(session_start, '04b')
+        repaired_bitstring = bitstring[:4] + session_start_bitstring + bitstring[8:]
+
+        return Individual(individual.course_id, individual.group_id, repaired_bitstring, 'lecture', None)
+
+    def repair_individual_lab(self, individual: Individual, preprocessed_df1, preprocessed_df2, lecture_population: list[Individual]):
+        course_id = individual.course_id
+        group_id = individual.group_id.split('-')[1]  # Extract group ID from lab ID
+        bitstring = individual.bitstring
+
         num_weeks_lab = 0
 
-        # Retrieve lab duration from preprocessed_df1 if available
-        for index, row in preprocessed_df1.iterrows():
-            if row['course_id'] == course_id:
-                num_weeks_lab = row['num_weeks_lab']
+        # 1. Get num_weeks_lab from preprocessed data
+        for df in [preprocessed_df1, preprocessed_df2]:
+            row = df[df['course_id'] == course_id]
+            if not row.empty:
+                num_weeks_lab = row.iloc[0]['num_weeks_lab']
                 break
 
-        # Retrieve lab duration from preprocessed_df2 if available
-        for index, row in preprocessed_df2.iterrows():
-            if row['course_id'] == course_id:
-                num_weeks_lab = row['num_weeks_lab']
-                break
-        
-        # Determine the corresponding lecture start week (Lecture always starts at week 1)
+        # 2. Find lecture start week (first '1' in weeks 8-)
         lecture_start_week = 0
-        for lecture in lecture_population:
-            lecture_parts = lecture.split('-')
-            lecture_course_id, lecture_group_id, lecture_bitstring = lecture_parts[0], lecture_parts[1], lecture_parts[2]
-            if lecture_course_id == course_id and lecture_group_id == group_id:
-                lecture_weeks = list(lecture_bitstring[8:])
+        for lec in lecture_population:
+            if lec.course_id == course_id and lec.group_id == group_id and lec.individual_type == 'lecture':
+                lecture_weeks = list(lec.bitstring[8:])
                 if '1' in lecture_weeks:
-                    lecture_start_week = lecture_weeks.index('1')  # First occurrence of '1' in lecture schedule
+                    lecture_start_week = lecture_weeks.index('1')
                 break
 
-        # Extract current lab weeks from the bitstring
+        # 3. Extract current lab weeks
         lab_weeks = list(bitstring[8:])
-        scheduled_weeks = [idx for idx, week in enumerate(lab_weeks) if week == '1']
+        scheduled_weeks = [i for i, c in enumerate(lab_weeks) if c == '1']
 
-        # Flags to check violations
-        violates_course_duration = len(scheduled_weeks) != num_weeks_lab
-        violates_lecture_before_lab = any(week < lecture_start_week + 4 for week in scheduled_weeks)
-        violates_lab_spacing = any(scheduled_weeks[i] + 1 == scheduled_weeks[i + 1] for i in range(len(scheduled_weeks) - 1))
-        violates_midterm_break = 7 in scheduled_weeks  # Ensure no lab sessions in midterm week (Week 7)
+        # 4. Violation checks
+        violates_duration = len(scheduled_weeks) != num_weeks_lab
+        violates_start_time = any(w < lecture_start_week + 4 for w in scheduled_weeks)
+        violates_spacing = any(scheduled_weeks[i] + 1 == scheduled_weeks[i + 1] for i in range(len(scheduled_weeks) - 1))
+        violates_midterm = 7 in scheduled_weeks
 
-        # If no violations, return the original individual
-        if not (violates_course_duration or violates_lecture_before_lab or violates_lab_spacing or violates_midterm_break):
-            return individual  # No changes needed
+        # Check time conflict with own lecture and same semester lectures
+        lab_day = bitstring[:4]
+        lab_session = bitstring[4:8]
+        lab_session_int = int(lab_session, 2)
+        lab_session_range = set(range(lab_session_int, lab_session_int + 5))
 
-        # --- Repair Process ---
-        min_start_week = lecture_start_week + 3  # Ensuring lab starts at least 4 weeks after lecture
-        available_weeks = [w for w in range(min_start_week, 16) if w != 7]  # Available weeks from min_start_week to week 16 (exclude week 7)
+        same_semester_courses = get_same_semester_courses(course_id, preprocessed_df1, preprocessed_df2)
+        own_lecture = get_lecture_by_course_group(lecture_population, course_id, group_id)
+        same_semester_lectures = get_lectures_by_courses(lecture_population, same_semester_courses)
 
-        # Step 1: Select the first week randomly
+        violates_time_conflict = False
+
+        # Check conflict with own lecture
+        if own_lecture:
+            lec_day = own_lecture.bitstring[:4]
+            lec_session = int(own_lecture.bitstring[4:8], 2)
+            if lec_day == lab_day and lec_session in lab_session_range:
+                for w in scheduled_weeks:
+                    if own_lecture.bitstring[8 + w] == '1':
+                        violates_time_conflict = True
+                        break
+
+        # Check conflict with same semester lectures
+        if not violates_time_conflict:
+            for lec in same_semester_lectures:
+                lec_day = lec.bitstring[:4]
+                lec_session = int(lec.bitstring[4:8], 2)
+                if lec_day == lab_day and lec_session in lab_session_range:
+                    for w in scheduled_weeks:
+                        if lec.bitstring[8 + w] == '1':
+                            violates_time_conflict = True
+                            break
+                if violates_time_conflict:
+                    break
+
+        if not (violates_duration or violates_start_time or violates_spacing or violates_midterm or violates_time_conflict):
+            return individual
+
+        # 5. Begin repair
+        min_start_week = lecture_start_week + 3
+        available_weeks = [w for w in range(min_start_week, 16) if w != 7]
+
+        if not available_weeks:
+            return individual 
+
         selected_weeks = []
         first_week = random.choice(available_weeks)
         selected_weeks.append(first_week)
         available_weeks.remove(first_week)
 
-        # Step 2: Determine parity (even/odd) based on the first selection
-        if first_week % 2 == 0:
-            available_weeks = [w for w in available_weeks if w % 2 == 0]
-        else:
-            available_weeks = [w for w in available_weeks if w % 2 != 0]
-        
-        # Step 3: Select the remaining weeks while ensuring non-consecutive selection
-        while len(selected_weeks) < num_weeks_lab:
-            if not available_weeks:
-                break
+        parity = first_week % 2
+        available_weeks = [w for w in available_weeks if w % 2 == parity]
+
+        while len(selected_weeks) < num_weeks_lab and available_weeks:
             week = random.choice(available_weeks)
             selected_weeks.append(week)
             available_weeks.remove(week)
 
-        # Assign '1' to selected lab weeks
-        last_part = ['0'] * 16
-        for week in selected_weeks:
-            last_part[week] = '1'
+        # 6. Repair day+session if violated
+        if violates_time_conflict:
+            time_bits = create_non_conflicting_time(own_lecture, same_semester_lectures)
+            if time_bits is None:
+                time_bits = bitstring[:8]  # fallback
+        else:
+            time_bits = bitstring[:8]
 
-        bitstring = bitstring[:8] + ''.join(last_part)
+        weeks_part = ['0'] * 16
+        for w in selected_weeks:
+            weeks_part[w] = '1'
+    
+        repaired_bitstring = time_bits + ''.join(weeks_part)
 
-        return '-'.join([course_id, lab_id, group_id, bitstring])
+        room_type = 'CS1' if group_id.startswith('CC') or group_id.startswith('CN') else 'CS2'
+        room_list = ROOMS.get(course_id, {}).get(room_type, [])
+
+        if not room_list:
+            raise ValueError(f"No rooms available for course {course_id} with group type {room_type}")
+
+        room_id = random.choice(room_list)
+
+        return Individual(individual.course_id, individual.group_id, repaired_bitstring, 'lab', room_id)
 
     def run(self, prefix_chromosomes, chromosome_length, max_generations, preprocessed_df1, preprocessed_df2, lecture_population=None):
         if lecture_population is None:
@@ -496,19 +500,18 @@ class GeneticAlgorithm:
                 # Update the best population across all generations
                 for individual in population:
                     if lecture_population is None:
-                        course_id, group_id = individual.split('-')[0], individual.split('-')[1]
                         score = scores[population.index(individual)]
-                        if course_id not in best_population:
-                            best_population[course_id] = {}
-                        best_population[course_id][group_id] = [individual, score]
+                        if individual.course_id not in best_population:
+                            best_population[individual.course_id] = {}
+                        best_population[individual.course_id][individual.group_id] = [individual, score]
                     else:
-                        course_id, lab_id, group_id = individual.split('-')[0], individual.split('-')[1], individual.split('-')[2]
+                        lab_id, group_id = individual.group_id.split('-')
                         score = scores[population.index(individual)]
-                        if course_id not in best_population:
-                            best_population[course_id] = {}
-                        if group_id not in best_population[course_id]:
-                            best_population[course_id][group_id] = {}
-                        best_population[course_id][group_id][lab_id] = [individual, score]
+                        if individual.course_id not in best_population:
+                            best_population[individual.course_id] = {}
+                        if group_id not in best_population[individual.course_id]:
+                            best_population[individual.course_id][group_id] = {}
+                        best_population[individual.course_id][group_id][lab_id] = [individual, score]
                     
                 print(f'Best Generation {i} - Fitness score: {fitness_score}')
                 print(f'Best Generation {i}: {violations}')
@@ -520,18 +523,18 @@ class GeneticAlgorithm:
                 break
 
             # Sort the population by fitness in ascending order
-            sorted_population, sorted_scores = zip(*sorted(zip(population, scores)))
+            sorted_population, sorted_scores = zip(*sorted(zip(population, scores), key=lambda x: x[1]))
             next_generation = []
             next_generation.extend(sorted_population[:self.elitism])
 
             if lecture_population is None:
 
-                selected_parents = set((ind.split('-')[0], ind.split('-')[1]) for ind in next_generation)
-                next_gen_set = set((ind.split('-')[0], ind.split('-')[1]) for ind in next_generation)
+                selected_parents = set((ind.course_id, ind.group_id) for ind in next_generation)
+                next_gen_set = set((ind.course_id, ind.group_id) for ind in next_generation)
 
                 while len(next_generation) < self.population_size:
-                    available_population = [ind for ind in sorted_population[self.elitism:] if (ind.split('-')[0], ind.split('-')[1]) not in selected_parents]
-                    available_scores = [score for ind, score in zip(sorted_population[self.elitism:], sorted_scores[self.elitism:]) if (ind.split('-')[0], ind.split('-')[1]) not in selected_parents]
+                    available_population = [ind for ind in sorted_population[self.elitism:] if (ind.course_id, ind.group_id) not in selected_parents]
+                    available_scores = [score for ind, score in zip(sorted_population[self.elitism:], sorted_scores[self.elitism:]) if (ind.course_id, ind.group_id) not in selected_parents]
                     
                     if not available_population:
                         break
@@ -559,28 +562,25 @@ class GeneticAlgorithm:
                     child1 = self.repair_session_start(child1, preprocessed_df1, preprocessed_df2)
                     child2 = self.repair_session_start(child2, preprocessed_df1, preprocessed_df2)
 
-                    child1_course_id, child1_group_id = child1.split('-')[0], child1.split('-')[1]
-                    child2_course_id, child2_group_id = child2.split('-')[0], child2.split('-')[1]
-
-                    if child1 not in next_generation and (child1_course_id, child1_group_id) not in next_gen_set:
+                    if child1 not in next_generation and (child1.course_id, child1.group_id) not in next_gen_set:
                         next_generation.append(child1)
-                        next_gen_set.add((child1_course_id, child1_group_id))
-                        selected_parents.add((parent1.split('-')[0], parent1.split('-')[1]))
+                        next_gen_set.add((child1.course_id, child1.group_id))
+                        selected_parents.add((parent1.course_id, parent1.group_id))
                     
-                    if child2 not in next_generation and len(next_generation) < self.population_size and (child2_course_id, child2_group_id) not in next_gen_set:
+                    if child2 not in next_generation and len(next_generation) < self.population_size and (child2.course_id, child2.group_id) not in next_gen_set:
                         next_generation.append(child2)
-                        next_gen_set.add((child2_course_id, child2_group_id))
-                        selected_parents.add((parent2.split('-')[0], parent2.split('-')[1]))
+                        next_gen_set.add((child2.course_id, child2.group_id))
+                        selected_parents.add((parent2.course_id, parent2.group_id))
 
                 population = next_generation
             
             else:
-                selected_parents = set((ind.split('-')[0], ind.split('-')[1], ind.split('-')[2]) for ind in next_generation)
-                next_gen_set = set((ind.split('-')[0], ind.split('-')[1], ind.split('-')[2]) for ind in next_generation)
+                selected_parents = set((ind.course_id, ind.group_id.split('-')[0], ind.group_id.split('-')[1]) for ind in next_generation)
+                next_gen_set = set((ind.course_id, ind.group_id.split('-')[0], ind.group_id.split('-')[1]) for ind in next_generation)
 
                 while len(next_generation) < self.population_size:
-                    available_population = [ind for ind in sorted_population[self.elitism:] if (ind.split('-')[0], ind.split('-')[1], ind.split('-')[2]) not in selected_parents]
-                    available_scores = [score for ind, score in zip(sorted_population[self.elitism:], sorted_scores[self.elitism:]) if (ind.split('-')[0], ind.split('-')[1], ind.split('-')[2]) not in selected_parents]
+                    available_population = [ind for ind in sorted_population[self.elitism:] if (ind.course_id, ind.group_id.split('-')[0], ind.group_id.split('-')[1]) not in selected_parents]
+                    available_scores = [score for ind, score in zip(sorted_population[self.elitism:], sorted_scores[self.elitism:]) if (ind.course_id, ind.group_id.split('-')[0], ind.group_id.split('-')[1]) not in selected_parents]
                     
                     if not available_population:
                         break
@@ -602,27 +602,27 @@ class GeneticAlgorithm:
                     child1 = self.mutate(child1)
                     child2 = self.mutate(child2)
 
-                    child1 = self.repair_day_lab(child1)
-                    child2 = self.repair_day_lab(child2)
+                    child1 = self.repair_day(child1)
+                    child2 = self.repair_day(child2)
 
-                    child1 = self.repair_session_start_lab(child1)
-                    child2 = self.repair_session_start_lab(child2)
+                    child1 = self.repair_session_start(child1, preprocessed_df1, preprocessed_df2)
+                    child2 = self.repair_session_start(child2, preprocessed_df1, preprocessed_df2)
 
                     child1 = self.repair_individual_lab(child1, preprocessed_df1, preprocessed_df2, lecture_population)
                     child2 = self.repair_individual_lab(child2, preprocessed_df1, preprocessed_df2, lecture_population)
 
-                    child1_course_id, child1_lab_id, child1_group_id = child1.split('-')[0], child1.split('-')[1], child1.split('-')[2]
-                    child2_course_id, child2_lab_id, child2_group_id = child2.split('-')[0], child2.split('-')[1], child2.split('-')[2]
+                    child1_lab_id, child1_group_id = child1.group_id.split('-')
+                    child2_lab_id, child2_group_id = child2.group_id.split('-')
 
-                    if child1 not in next_generation and (child1_course_id, child1_lab_id, child1_group_id) not in next_gen_set:
+                    if child1 not in next_generation and (child1.course_id, child1_lab_id, child1_group_id) not in next_gen_set:
                         next_generation.append(child1)
-                        next_gen_set.add((child1_course_id, child1_lab_id, child1_group_id))
-                        selected_parents.add((parent1.split('-')[0], parent1.split('-')[1], parent1.split('-')[2]))
+                        next_gen_set.add((child1.course_id, child1_lab_id, child1_group_id))
+                        selected_parents.add((parent1.course_id, parent1.group_id.split('-')[0], parent1.group_id.split('-')[1]))
                     
-                    if child2 not in next_generation and len(next_generation) < self.population_size and (child2_course_id, child2_lab_id, child2_group_id) not in next_gen_set:
+                    if child2 not in next_generation and len(next_generation) < self.population_size and (child2.course_id, child2_lab_id, child2_group_id) not in next_gen_set:
                         next_generation.append(child2)
-                        next_gen_set.add((child2_course_id, child2_lab_id, child2_group_id))
-                        selected_parents.add((parent2.split('-')[0], parent2.split('-')[1], parent2.split('-')[2]))
+                        next_gen_set.add((child2.course_id, child2_lab_id, child2_group_id))
+                        selected_parents.add((parent2.course_id, parent2.group_id.split('-')[0], parent2.group_id.split('-')[1]))
 
                 population = next_generation
         
