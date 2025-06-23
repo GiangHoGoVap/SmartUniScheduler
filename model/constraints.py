@@ -154,8 +154,9 @@ class CourseSameSemesterConstraint(Constraint):
         return self.violations
 
 class CourseSameSemesterLabConstraint(Constraint):
-    def __init__(self, course_info):
+    def __init__(self, course_info, df_course_lookup):
         super().__init__('Course same semester lab constraint')
+        self.df_course_lookup = df_course_lookup
         self.course_info = course_info
         # Precompute course lists for each semester
         self.semester_courses = {}
@@ -241,6 +242,28 @@ class CourseSameSemesterLabConstraint(Constraint):
                                 num_lab_sessions = self.course_info[self.course_info['course_id'] == lab_course_id]['num_lab_sessions'].values[0]
                                 if count_overlap([lab_session_start, lecture_session_start], [num_lab_sessions, num_sessions]) > 0:
                                     self.violations += 1
+
+        for i in range(len(lab_population) - 1):
+            for j in range(i + 1, len(lab_population)):
+                lab1, lab2 = lab_population[i], lab_population[j]
+                if lab1.room == lab2.room:
+                    day1 = int(lab1.bitstring[:4], 2)
+                    day2 = int(lab2.bitstring[:4], 2)
+                    session1 = int(lab1.bitstring[4:8], 2)
+                    session2 = int(lab2.bitstring[4:8], 2)
+                    weeks1 = tuple(lab1.bitstring[8:])
+                    weeks2 = tuple(lab2.bitstring[8:])
+                    
+                    if day1 == day2:
+                        course1 = lab1.course_id
+                        course2 = lab2.course_id
+
+                        num1 = self.df_course_lookup[self.df_course_lookup['course_id'] == course1]['num_lab_sessions'].values[0]
+                        num2 = self.df_course_lookup[self.df_course_lookup['course_id'] == course2]['num_lab_sessions'].values[0]
+
+                        if count_overlap([session1, session2], [num1, num2]) > 0:
+                            if weeks_overlap(weeks1, weeks2):
+                                self.violations += 1
 
         return self.violations
 

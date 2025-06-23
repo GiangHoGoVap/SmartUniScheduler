@@ -90,7 +90,7 @@ def create_non_conflicting_time(lecture, same_semester_lectures, num_trials=20):
                     break
 
         if not conflict:
-            return day_bin + session_bin  # safe to use
+            return [int(lab_day, 2), session_start]  # safe to use
 
     return None  # fallback if no conflict-free time found
 
