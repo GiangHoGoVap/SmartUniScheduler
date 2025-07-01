@@ -3,3 +3,6 @@ pandas
 matplotlib
 openpyxl
 pygad
+ollama
+scikit-fuzzy
+scipy

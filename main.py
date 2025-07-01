@@ -8,22 +8,23 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import pygad
 
+from model.llm_parser import parse_with_llm
 from model.individual import Individual
 from model.utils import (
     get_same_semester_courses, get_lecture_by_course_group,
-    get_lectures_by_courses, create_non_conflicting_time
+    get_lectures_by_courses, create_non_conflicting_time, UNIVERSE, slot_of
 )
 from model.constraints import (
     ValidDayConstraint, SessionStartConstraint, LunchBreakConstraint,
     MidtermBreakConstraint, CourseDurationConstraint,
     CourseSameSemesterConstraint, CourseSameSemesterLabConstraint,
     LectureBeforeLabConstraint, LabSessionSpacingConstraint,
-    ConstraintsManager
+    ConstraintsManager, SoftSlotPreferenceConstraint
 )
 
 ### --- MARK: Global Constants & Configs ---
-SHEET_FILE_NAME = 'Dự kiến SVMT_242 data.xlsx'
-SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT']
+SHEET_FILE_NAME = 'data.xlsx'
+SHEET_NAMES = ['Thống kê', 'KHMT', 'KTMT', 'Đề xuất']
 CLASS_BLOCK_SIZE = 18
 VALID_DAYS = range(2, 7)
 VALID_DAYS_LAB = range(2, 8)
@@ -78,7 +79,7 @@ PROGRAM_ID = {
     "Chương trình tiêu chuẩn": "CQ",
     "Chương trình định hướng Nhật Bản": "CN"
 }
-REVERSE_PROGRAM_ID = {v: k for k, v in PROGRAM_ID.items()}
+REVERSE_PROGRAM_ID = { v: k for k, v in PROGRAM_ID.items() }
 
 COLUMN_MAP = {
     "Mã môn học": "course_id",
@@ -92,14 +93,22 @@ COLUMN_MAP = {
     "Số tiết LT": "num_sessions",
     "Số tiết TH": "num_lab_sessions",
     "Học kỳ": "semester",
-    "Thực hành": "is_lab"
+    "Thực hành": "is_lab",
+    "MSCB": "instructor_id",
+    "Mã nhóm": "group_id",
+    "Mô tả": "description"
 }
 
 COURSE_ID_TO_NAME = {}
 ROOM_TYPE_ID = {}
+PREFS = {}                # nested dict teacher → course-key → spec
+COURSE_TEACHER = {}       # course-key → teacher  (needed by constraint)
+PREFS_slot = {}
 
 lab_rooms = []
 lecture_population = []
+df_course_lookup = None 
+duration_lookup = {}
 
 ### --- MARK: Data Loading and Preprocessing ---
 def read_excel(file_path, sheet_name):
@@ -108,6 +117,24 @@ def read_excel(file_path, sheet_name):
 def clean_column(data, column_name):
     data[column_name] = data[column_name].str.replace(r'\s+', ' ', regex=True).str.strip()
     return data
+
+def spec_to_slot_params(spec: dict, duration: int):
+    s_idx = slot_of[(spec["day"], spec["session_start"])]
+    e_idx = slot_of[(spec["day"], spec["session_end"])]
+    if spec["fuzzy_type"] == "rectangle":
+        return { "shape": "rect", "start_idx": s_idx, "end_idx": e_idx }
+
+    best_start = spec.get("best_start", spec["session_start"])
+    best_idx   = slot_of[(spec["day"], best_start)]
+    plateau_end_idx = best_idx + duration - 1
+
+    return {
+        "shape": "trap",
+        "a": max(s_idx - 1, 0),
+        "b": best_idx,
+        "c": plateau_end_idx,
+        "d": min(e_idx + 1, len(slot_of) - 1)
+    }
 
 def preprocess(df, index):
     global COURSE_ID_TO_NAME, ROOM_TYPE_ID
@@ -138,6 +165,25 @@ def preprocess(df, index):
             lambda r: int(r['num_lab_lectures'] / r['num_lab_sessions']) if r['num_lab_sessions'] else 0, axis=1
         )
 
+    elif index == 3:
+        for row in df.itertuples():
+            course_key = f"{row.course_id}-{row.group_id}"
+            teacher = row.instructor_id
+            phrase = row.description
+
+            duration = course_duration(row.course_id)      
+            spec = parse_with_llm(phrase, course_key, duration) 
+
+            PREFS.setdefault(teacher, {})[course_key] = spec
+            COURSE_TEACHER[course_key] = teacher
+        
+        for teacher, course_dict in PREFS.items():
+            print(f"Course dict for teacher {teacher}: ", course_dict)
+            PREFS_slot[teacher] = {
+                ck: spec_to_slot_params(sp, course_duration(ck.split('-')[0]))
+                for ck, sp in course_dict.items()
+            }
+
     return df
 
 ### --- MARK: Encoding and Constraint Setup ---
@@ -156,27 +202,23 @@ def encode(df):
 def initialize_constraints(df1, df2, is_lab=False):
     cm = ConstraintsManager()
     cm.add_constraint(MidtermBreakConstraint())
+    cm.add_constraint(SessionStartConstraint(df1, is_lab))
+    cm.add_constraint(SessionStartConstraint(df2, is_lab))
+    cm.add_constraint(CourseDurationConstraint(df1, is_lab))
+    cm.add_constraint(CourseDurationConstraint(df2, is_lab))
 
     if is_lab:
-        cm.add_constraint(ValidDayConstraint(VALID_DAYS_LAB, True))
-        cm.add_constraint(SessionStartConstraint(df1, True))
-        cm.add_constraint(SessionStartConstraint(df2, True))
-        cm.add_constraint(CourseDurationConstraint(df1, True))
-        cm.add_constraint(CourseDurationConstraint(df2, True))
+        cm.add_constraint(ValidDayConstraint(VALID_DAYS_LAB, is_lab))
         cm.add_constraint(CourseSameSemesterLabConstraint(df1, df_course_lookup))
         cm.add_constraint(CourseSameSemesterLabConstraint(df2, df_course_lookup))
         cm.add_constraint(LectureBeforeLabConstraint())
         cm.add_constraint(LabSessionSpacingConstraint())
     else:
         cm.add_constraint(ValidDayConstraint(VALID_DAYS))
-        cm.add_constraint(SessionStartConstraint(df1))
-        cm.add_constraint(SessionStartConstraint(df2))
         cm.add_constraint(LunchBreakConstraint())
-        cm.add_constraint(CourseDurationConstraint(df1))
-        cm.add_constraint(CourseDurationConstraint(df2))
         cm.add_constraint(CourseSameSemesterConstraint(df1))
         cm.add_constraint(CourseSameSemesterConstraint(df2))
-
+        cm.add_constraint(SoftSlotPreferenceConstraint(PREFS_slot, COURSE_TEACHER, duration_lookup))
     return cm
 
 ### --- MARK: Population Initialization ---
@@ -312,26 +354,33 @@ def decode_solution(solution, class_ids, is_lab=False, room_list=None):
 
 ### --- MARK: Fitness Evaluation ---
 def evaluate_fitness_generic(individuals, constraints_manager, is_lab=False, lecture_population=None):
-    scores = [constraints_manager.evaluate(ind) * 0.5 for ind in individuals]
-
+    scores = [constraints_manager.evaluate(ind) for ind in individuals]
+    soft_scores = [constraints_manager.evaluate_soft_individual(ind) for ind in individuals]
+    
     if is_lab:
         pop_scores = constraints_manager.evaluate_population(individuals, is_lab=True, lecture_population=lecture_population)
     else:
         pop_scores = constraints_manager.evaluate_population(individuals)
 
     for i in range(len(scores)):
-        scores[i] += pop_scores[i] * 0.5
+        if is_lab is False:
+            if soft_scores[i] is None:    
+                scores[i] = 0.5 * scores[i] + 0.5 * pop_scores[i]
+            else:
+                scores[i] = 0.4 * scores[i] + 0.4 * pop_scores[i] + 0.2 * soft_scores[i]
+        else:
+            scores[i] = 0.5 * scores[i] + 0.5 * pop_scores[i]
         scores[i] *= 1 / len(individuals)
 
     return sum(scores)
 
 def fitness_func(ga_instance, solution, solution_idx):
     individuals = decode_solution(solution, chromosomes_df, False)
-    return -evaluate_fitness_generic(individuals, constraints_manager, is_lab=False)
+    return evaluate_fitness_generic(individuals, constraints_manager, is_lab=False)
 
 def fitness_func_lab(ga_instance, solution, solution_idx):
     individuals = decode_solution(solution, chromosomes_lab_df, True, lab_rooms)
-    return -evaluate_fitness_generic(individuals, constraints_manager_lab, is_lab=True, lecture_population=lecture_population)
+    return evaluate_fitness_generic(individuals, constraints_manager_lab, is_lab=True, lecture_population=lecture_population)
 
 ### --- MARK: Genetic Operators ---
 def general_crossover(parents, offspring_size, class_count):
@@ -424,6 +473,10 @@ def save_decoded_schedule(df_lecture=None, df_lab=None, output_path='output/resu
             df_lab.to_excel(writer, sheet_name='TH', index=False)
     print(f"Schedule saved to {output_path}")
 
+def course_duration(course_id: str) -> int:
+    row = df_course_lookup.loc[df_course_lookup.course_id == course_id]
+    return int(row.num_sessions.iloc[0]) if not row.empty else 2
+
 def plot_best_fitness(ga_instance):
     best_fitness_per_gen = ga_instance.best_solutions_fitness
 
@@ -440,14 +493,20 @@ def plot_best_fitness(ga_instance):
 def main():
     # 1. Load and preprocess input
     file_path = os.path.join('data', SHEET_FILE_NAME)
-    df, df_khmt, df_ktmt = [read_excel(file_path, s) for s in SHEET_NAMES]
+    df, df_khmt, df_ktmt, df_pref = [read_excel(file_path, s) for s in SHEET_NAMES]
     df_main = preprocess(df, 0)
     df_khmt = preprocess(df_khmt, 1)
     df_ktmt = preprocess(df_ktmt, 2)
 
     # 2. Encode and setup constraints
-    global chromosomes_df, NUM_CLASSES, NUM_CLASSES_LAB, constraints_manager, constraints_manager_lab, chromosomes_lab_df, lecture_population, df_course_lookup
+    global chromosomes_df, NUM_CLASSES, NUM_CLASSES_LAB, constraints_manager, constraints_manager_lab, chromosomes_lab_df, lecture_population, df_course_lookup, duration_lookup
     df_course_lookup = pd.concat([df_khmt, df_ktmt], ignore_index=True).drop_duplicates(subset="course_id")
+    duration_lookup = (pd.concat([df_khmt[["course_id", "num_sessions"]], df_ktmt[["course_id", "num_sessions"]]], ignore_index=True)
+                       .drop_duplicates(subset="course_id")
+                       .set_index("course_id")["num_sessions"]
+                       .astype(int).to_dict())
+    df_pref = preprocess(df_pref, 3)
+
     chromosomes_df, chromosomes_lab_df = encode(df_main)
     NUM_CLASSES = len(chromosomes_df)
     NUM_CLASSES_LAB = len(chromosomes_lab_df)
@@ -471,7 +530,7 @@ def main():
         mutation_type=custom_mutation,
         mutation_probability=0.1,
         allow_duplicate_genes=True,
-        stop_criteria="saturate_10"
+        stop_criteria="reach_1"
     )
 
     # 5. Setup GA for lab
@@ -486,7 +545,7 @@ def main():
         mutation_type=custom_mutation_lab,
         mutation_probability=0.1,
         allow_duplicate_genes=True,
-        stop_criteria="reach_0"
+        stop_criteria="reach_1"
     )
 
     # 6. Run GA (Lecture)
@@ -507,12 +566,12 @@ def main():
     best_individuals_lab = decode_solution(best_solution_lab, chromosomes_lab_df, is_lab=True, room_list=lab_rooms)
 
     # Count violations
-    lecture_violations = constraints_manager.count_violations(best_individuals_lecture)
-    lab_violations = constraints_manager_lab.count_violations(best_individuals_lab, best_individuals_lecture)
+    hard_lec, soft_lec = constraints_manager.count_violations(best_individuals_lecture, verbose=True)
+    hard_lab, soft_lab = constraints_manager_lab.count_violations(population=best_individuals_lab, lecture_population=best_individuals_lecture, verbose=True)
 
     print("-" * 50)
-    print("Best fitness (Lecture):", -best_fitness)
-    print("Best fitness (Lab):", -best_fitness_lab)
+    print("Best fitness (Lecture):", best_fitness)
+    print("Best fitness (Lab):", best_fitness_lab)
 
     # 8. Save output
     save_decoded_schedule(df_lecture=df_lecture, df_lab=df_lab)

@@ -1,24 +1,26 @@
-VALID_DAY = range(2, 8)
-VALID_SESSION = range(3, 13)
-
-from model.utils import find_duplicates, count_overlap, weeks_overlap
+from model.utils import UNIVERSE, slot_of, _pretty_table
 from model.individual import Individual
 
+import pandas as pd
+import numpy as np
+import skfuzzy as fuzz
+
 class Constraint:
-    def __init__(self, name):
+    def __init__(self, name, is_soft=False, weight=1):
         self.name = name
         self.violations = 0
+        self.is_soft = is_soft
+        self.weight = weight
 
     def evaluate(self, individual: Individual):
         return 0
 
 class ValidDayConstraint(Constraint):
-    def __init__(self, valid_days, is_lab_constraint=False):
-        super().__init__('Valid day constraint' if not is_lab_constraint else 'Valid day lab constraint')
+    def __init__(self, valid_days, is_lab=False):
+        super().__init__('Valid day constraint' if not is_lab else 'Valid day lab constraint')
         self.valid_days = valid_days
 
     def evaluate(self, individual: Individual):
-        # chromosome = '11010111011111111011111'
         self.violations = 0
         day = int(individual.bitstring[:4], 2)
         if day not in self.valid_days:
@@ -27,27 +29,23 @@ class ValidDayConstraint(Constraint):
         return self.violations 
 
 class SessionStartConstraint(Constraint):
-    def __init__(self, course_info, is_lab_constraint=False):
-        super().__init__('Session start constraint' if not is_lab_constraint else 'Session start lab constraint')
+    def __init__(self, course_info, is_lab=False):
+        super().__init__('Session start constraint' if not is_lab else 'Session start lab constraint')
         self.course_info = course_info
-        self.is_lab_constraint = is_lab_constraint
+        self.is_lab = is_lab
 
     def evaluate(self, individual: Individual):
-        # Extract session start directly from chromosome
         self.violations = 0
         session_start = int(individual.bitstring[4:8], 2)
         
-        # Check if it's a lab constraint
-        if self.is_lab_constraint:
-            # Lab constraints: session start must be 2 or 8
+        if self.is_lab:
             if session_start not in {2, 8}:
                 self.violations = 1
                 individual.add_violation(SessionStartConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         else:
             for index, row in self.course_info.iterrows():
                 if row['course_id'] == individual.course_id:
-                    # Check if session start fits within valid session range
-                    if session_start + row['num_sessions'] - 1 not in VALID_SESSION:
+                    if session_start + row['num_sessions'] - 1 not in range(3, 13):
                         self.violations = 1
                         individual.add_violation(SessionStartConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
@@ -77,193 +75,209 @@ class MidtermBreakConstraint(Constraint):
         return self.violations
     
 class CourseDurationConstraint(Constraint):
-    def __init__(self, course_info, is_lab_constraint=False):
-        super().__init__('Course duration constraint' if not is_lab_constraint else 'Course duration lab constraint')
+    def __init__(self, course_info, is_lab=False):
+        super().__init__('Course duration constraint' if not is_lab else 'Course duration lab constraint')
         self.course_info = course_info
-        self.is_lab_constraint = is_lab_constraint
+        self.is_lab = is_lab
 
     def evaluate(self, individual: Individual):
-        # Extract course duration from chromosome
         self.violations = 0
         weeks = list(individual.bitstring[8:])
         total_duration = sum(int(week) for week in weeks)
 
         for index, row in self.course_info.iterrows():
             if row['course_id'] == individual.course_id:
-                if self.is_lab_constraint:
+                if self.is_lab:
                     expected_duration = row['num_weeks_lab']
                 else:
                     expected_duration = row['num_weeks']
-                # self.violations += abs(total_duration - expected_duration) ** 2
                 if total_duration != expected_duration:
                     self.violations = 1
                     individual.add_violation(CourseDurationConstraint.__name__, [f"{individual.course_id}-{individual.group_id}"])
         return self.violations
 
 class CourseSameSemesterConstraint(Constraint):
-    def __init__(self, course_info):
-        super().__init__('CourseSameSemesterConstraint')
-        self.course_info = course_info
-        self.semester_courses = {semester: set(course_info[course_info['semester'] == semester]['course_id'].tolist())
-                                 for semester in range(1, 9)}
+    def __init__(self, course_info: pd.DataFrame):
+        super().__init__("Course same semester constraint")
+        self.semester_courses = { sem: set(course_info.loc[course_info.semester == sem, "course_id"]) for sem in range(1, 9) }
+        self.duration = dict(course_info[["course_id", "num_sessions"]].itertuples(index=False))
 
-    def evaluate_population(self, population):
+    @staticmethod
+    def _day(bitstring: str) -> int:
+        return int(bitstring[:4], 2)
+
+    @staticmethod
+    def _start(bitstring: str) -> int:
+        return int(bitstring[4:8], 2)
+
+    @staticmethod
+    def _weeks_mask(bitstring: str) -> int:
+        return int(bitstring[8:], 2)
+
+    def evaluate_population(self, population: list["Individual"]) -> int:
         self.violations = 0
 
-        for semester in range(1, 9):
-            course_set = self.semester_courses[semester]
-            course_same_semester = {}
+        # Bucket by semester → group → day  (dict of dicts of lists)
+        bucket: dict[int, dict[str, dict[int, list[tuple]]]] = {s: {} for s in range(1, 9)}
 
-            for ind in population:
+        for ind in population:
+            # skip courses not in the lookup (safety)
+            for sem, course_set in self.semester_courses.items():
                 if ind.course_id in course_set:
-                    course_same_semester.setdefault(ind.group_id, []).append(ind)
+                    gdict = bucket[sem].setdefault(ind.group_id, {})
+                    dlist = gdict.setdefault(self._day(ind.bitstring), [])
+                    dlist.append(ind)
+                    break  # found its semester
 
-            for group_id, individuals in course_same_semester.items():
-                # Group by day
-                day_dict = {}
-                for ind in individuals:
-                    day = int(ind.bitstring[:4], 2)
-                    day_dict.setdefault(day, []).append(ind)
+        # Now sweep
+        for sem_dict in bucket.values():
+            for day_dict in sem_dict.values():
+                for day_inds in day_dict.values():
+                    # sort by session_start
+                    day_inds.sort(key=lambda x: self._start(x.bitstring))
 
-                for day, same_day_inds in day_dict.items():
-                    # Extract with timing and sort
-                    slots = []
-                    for ind in same_day_inds:
-                        start = int(ind.bitstring[4:8], 2)
-                        weeks = tuple(ind.bitstring[8:])
-                        duration = self.course_info[self.course_info['course_id'] == ind.course_id]['num_sessions'].values[0]
-                        end = start + duration
-                        slots.append((start, end, ind, weeks))
+                    prev_end = -1
+                    prev_mask = 0
+                    prev_ind = None
 
-                    # Sort by start time
-                    slots.sort(key=lambda x: x[0])
+                    for ind in day_inds:
+                        start = self._start(ind.bitstring)
+                        dur   = self.duration[ind.course_id]
+                        end   = start + dur
+                        mask  = self._weeks_mask(ind.bitstring)
 
-                    # Sweep for overlap
-                    for i in range(len(slots) - 1):
-                        _, end_i, ind_i, weeks_i = slots[i]
-                        for j in range(i + 1, len(slots)):
-                            start_j, end_j, ind_j, weeks_j = slots[j]
-                            if start_j >= end_i:
-                                break  # No overlap, can skip due to sorting
-                            if weeks_i == weeks_j:
-                                # Violation
-                                ind_i.add_violation(CourseSameSemesterConstraint.__name__, [ind_j.course_id])
-                                ind_j.add_violation(CourseSameSemesterConstraint.__name__, [ind_i.course_id])
-                                self.violations += 1
+                        if start < prev_end and (mask & prev_mask):
+                            # overlap in time AND same weeks
+                            ind.add_violation(self.name, [prev_ind.course_id])
+                            prev_ind.add_violation(self.name, [ind.course_id])
+                            self.violations += 1
+
+                        # update sweep pointer
+                        if end > prev_end:
+                            prev_end, prev_mask, prev_ind = end, mask, ind
 
         return self.violations
 
 class CourseSameSemesterLabConstraint(Constraint):
-    def __init__(self, course_info, df_course_lookup):
-        super().__init__('Course same semester lab constraint')
-        self.df_course_lookup = df_course_lookup
-        self.course_info = course_info
-        # Precompute course lists for each semester
-        self.semester_courses = {}
-        for semester in range(1, 9):
-            self.semester_courses[semester] = set(
-                self.course_info[self.course_info['semester'] == semester]['course_id'].tolist()
-            )
+    def __init__(self, course_info: pd.DataFrame, course_lookup: pd.DataFrame):
+        super().__init__("Course same semester lab constraint")
 
-    def evaluate_population(self, lab_population, lecture_population):
-        self.violations = 0  # Reset violations count
+        self.semester_courses = { sem: set(course_info.loc[course_info.semester == sem, "course_id"]) for sem in range(1, 9) }
+        self.lab_dur = dict(course_lookup[["course_id", "num_lab_sessions"]].dropna().itertuples(index=False))
+        self.lec_dur = dict(course_lookup[["course_id", "num_sessions"]].dropna().itertuples(index=False))
 
-        for semester in range(1, 9):
-            course_set = self.semester_courses[semester]
+    @staticmethod
+    def _day(bitstring: str) -> int:
+        return int(bitstring[:4], 2)
 
-            # Group labs and lectures by group_id
-            lab_same_semester = {}
-            lecture_same_semester = {}
+    @staticmethod
+    def _start(bitstring: str) -> int:
+        return int(bitstring[4:8], 2)
 
-            for lab in lab_population:
-                lab_course_id, lab_group_id = lab.course_id, lab.group_id.split('-')[1]
-                if lab_course_id in course_set:
-                    if lab_group_id not in lab_same_semester:
-                        lab_same_semester[lab_group_id] = []
-                    lab_same_semester[lab_group_id].append(lab)
+    @staticmethod
+    def _weeks_mask(bitstring: str) -> int:
+        return int(bitstring[8:], 2)         
 
-            for lecture in lecture_population:
-                lecture_course_id, lecture_group_id = lecture.course_id, lecture.group_id
-                if lecture_course_id in course_set:
-                    if lecture_group_id not in lecture_same_semester:
-                        lecture_same_semester[lecture_group_id] = []
-                    lecture_same_semester[lecture_group_id].append(lecture)
+    def evaluate_population(self, lab_pop: list["Individual"], lecture_pop: list["Individual"]) -> int:
+        self.violations = 0
 
-            # Check violations for labs
-            for group_id, labs in lab_same_semester.items():
-                lab_days = [int(ind.bitstring[:4], 2) for ind in labs]
-                lab_session_starts = [int(ind.bitstring[4:8], 2) for ind in labs]
-                lab_weeks = [tuple(ind.bitstring[8:]) for ind in labs]
-                lab_course_ids = [ind.course_id for ind in labs]
-                lab_room_ids = [ind.room for ind in labs]
+        # ---- Build buckets -------------------------------------------------
+        by_sem_grp_day: dict[int, dict[str, dict[int, list["Individual"]]]] = { s: {} for s in range(1, 9) }
 
-                # Detect duplicate days
-                day_indices = {}
-                for idx, day in enumerate(lab_days):
-                    day_indices.setdefault(day, []).append(idx)
+        # bucket labs
+        for lab in lab_pop:
+            for sem, course_set in self.semester_courses.items():
+                if lab.course_id in course_set:
+                    gdict = by_sem_grp_day[sem].setdefault(lab.group_id.split("-")[1], {})
+                    gdict.setdefault(self._day(lab.bitstring), []).append(lab)
+                    break  # found semester
 
-                # Process duplicate days
-                for day, indices in day_indices.items():
-                    if len(indices) > 1:
-                        lab_sessions_from_day_duplicates = [lab_session_starts[i] for i in indices]
-                        lab_weeks_from_day_duplicates = [lab_weeks[i] for i in indices]
-                        lab_course_ids_from_day_duplicates = [lab_course_ids[i] for i in indices]
-                        # labs_from_day_duplicates = [labs[i] for i in indices]
-                        lab_room_ids_from_day_duplicates = [lab_room_ids[i] for i in indices]
+        # bucket lectures (keyed by full group id)
+        lect_by_sem_grp_day: dict[int, dict[str, dict[int, list["Individual"]]]] = { s: {} for s in range(1, 9) }
+        for lec in lecture_pop:
+            for sem, course_set in self.semester_courses.items():
+                if lec.course_id in course_set:
+                    gdict = lect_by_sem_grp_day[sem].setdefault(lec.group_id, {})
+                    gdict.setdefault(self._day(lec.bitstring), []).append(lec)
+                    break
 
-                        num_sessions_from_day_duplicates = [self.course_info[self.course_info['course_id'] == course_id]['num_lab_sessions'].values[0]
-                                                            for course_id in lab_course_ids_from_day_duplicates]
+        # ---- Check lab ↔ lab overlaps in same group & semester -------------
+        for sem_dict in by_sem_grp_day.values():
+            for grp_dict in sem_dict.values():
+                for day, labs in grp_dict.items():
+                    # sort by start
+                    labs.sort(key=lambda x: self._start(x.bitstring))
 
-                        num_lab_overlap_cases = count_overlap(lab_sessions_from_day_duplicates, num_sessions_from_day_duplicates)
-                        if num_lab_overlap_cases > 0:
-                            for i in range(len(lab_weeks_from_day_duplicates)):
-                                for j in range(i + 1, len(lab_weeks_from_day_duplicates)):
-                                    if lab_room_ids_from_day_duplicates[i] == lab_room_ids_from_day_duplicates[j] and weeks_overlap(lab_weeks_from_day_duplicates[i], lab_weeks_from_day_duplicates[j]):
-                                        # print(f"Lab {lab_course_ids_from_day_duplicates[i]} overlaps with lab {lab_course_ids_from_day_duplicates[j]} on day {day} in weeks {lab_weeks_from_day_duplicates[i]} and {lab_weeks_from_day_duplicates[j]} at room {lab_room_ids_from_day_duplicates[i]}.")
-                                        self.violations += 1
+                    prev_end = -1
+                    prev_mask = 0
+                    prev_lab = None
 
-            # Check overlaps between labs and lectures
-            for group_id, labs in lab_same_semester.items():
-                for lab in labs:
-                    lab_course_id, lab_bitstring = lab.course_id, lab.bitstring
-                    lab_day = int(lab_bitstring[:4], 2)
-                    lab_session_start = int(lab_bitstring[4:8], 2)
-                    lab_weeks = tuple(lab_bitstring[8:])
+                    for lab in labs:
+                        s = self._start(lab.bitstring)
+                        d = self.lab_dur.get(lab.course_id, 2)
+                        e = s + d
+                        m = self._weeks_mask(lab.bitstring)
 
-                    if group_id in lecture_same_semester:
-                        for lecture in lecture_same_semester[group_id]:
-                            lecture_course_id, lecture_bitstring = lecture.course_id, lecture.bitstring
-                            lecture_day = int(lecture_bitstring[:4], 2)
-                            lecture_session_start = int(lecture_bitstring[4:8], 2)
-                            lecture_weeks = tuple(lecture_bitstring[8:])
+                        if s < prev_end and (m & prev_mask):
+                            lab.add_violation(self.name, [prev_lab.course_id])
+                            prev_lab.add_violation(self.name, [lab.course_id])
+                            self.violations += 1
 
-                            if lab_day == lecture_day:
-                                num_sessions = self.course_info[self.course_info['course_id'] == lecture_course_id]['num_sessions'].values[0]
-                                num_lab_sessions = self.course_info[self.course_info['course_id'] == lab_course_id]['num_lab_sessions'].values[0]
-                                if count_overlap([lab_session_start, lecture_session_start], [num_lab_sessions, num_sessions]) > 0:
-                                    self.violations += 1
+                        if e > prev_end:
+                            prev_end, prev_mask, prev_lab = e, m, lab
 
-        for i in range(len(lab_population) - 1):
-            for j in range(i + 1, len(lab_population)):
-                lab1, lab2 = lab_population[i], lab_population[j]
-                if lab1.room == lab2.room:
-                    day1 = int(lab1.bitstring[:4], 2)
-                    day2 = int(lab2.bitstring[:4], 2)
-                    session1 = int(lab1.bitstring[4:8], 2)
-                    session2 = int(lab2.bitstring[4:8], 2)
-                    weeks1 = tuple(lab1.bitstring[8:])
-                    weeks2 = tuple(lab2.bitstring[8:])
-                    
-                    if day1 == day2:
-                        course1 = lab1.course_id
-                        course2 = lab2.course_id
+        # ---- Check lab ↔ lecture overlaps within same group ----------------
+        for sem in range(1, 9):
+            lab_grp = by_sem_grp_day[sem]
+            lec_grp = lect_by_sem_grp_day[sem]
 
-                        num1 = self.df_course_lookup[self.df_course_lookup['course_id'] == course1]['num_lab_sessions'].values[0]
-                        num2 = self.df_course_lookup[self.df_course_lookup['course_id'] == course2]['num_lab_sessions'].values[0]
+            for grp_id, labs_by_day in lab_grp.items():
+                if grp_id not in lec_grp:
+                    continue
+                for day, labs in labs_by_day.items():
+                    lectures = lec_grp[grp_id].get(day, [])
+                    if not lectures:
+                        continue
 
-                        if count_overlap([session1, session2], [num1, num2]) > 0:
-                            if weeks_overlap(weeks1, weeks2):
+                    # One pass over lectures per day (rarely many)
+                    for lab in labs:
+                        ls = self._start(lab.bitstring)
+                        ld = self.lab_dur.get(lab.course_id, 2)
+                        le = ls + ld
+                        lm = self._weeks_mask(lab.bitstring)
+
+                        for lec in lectures:
+                            ss = self._start(lec.bitstring)
+                            dd = self.lec_dur.get(lec.course_id, 2)
+                            ee = ss + dd
+                            mm = self._weeks_mask(lec.bitstring)
+
+                            if ls < ee and ss < le and (lm & mm):
                                 self.violations += 1
+
+        # ---- Room conflicts across all groups ------------------------------
+        room_day_map: dict[tuple[str, int], list[tuple[int, int, int]]] = {}
+        # key → list of (start, end, week_mask)
+
+        for lab in lab_pop:
+            key = (lab.room, self._day(lab.bitstring))
+            lst = room_day_map.setdefault(key, [])
+            s   = self._start(lab.bitstring)
+            d   = self.lab_dur.get(lab.course_id, 2)
+            e   = s + d
+            m   = self._weeks_mask(lab.bitstring)
+
+            lst.append((s, e, m))
+
+        # For each room‑day, sort and sweep
+        for lst in room_day_map.values():
+            lst.sort()
+            prev_s, prev_e, prev_m = lst[0]
+            for s, e, m in lst[1:]:
+                if s < prev_e and (m & prev_m):
+                    self.violations += 1
+                if e > prev_e:                 # update sweep pointer
+                    prev_s, prev_e, prev_m = s, e, m
 
         return self.violations
 
@@ -274,29 +288,25 @@ class LectureBeforeLabConstraint(Constraint):
         self.penalty_weight = penalty_weight  # Scaling factor for the penalty
 
     def evaluate_population(self, lab_population, lecture_population):
-        # Initialize a list to store penalties for each lab in the population
         penalties = [0] * len(lab_population)
 
         # Precompute lecture start weeks for faster lookup
         lecture_start_weeks = {}
         for lecture in lecture_population:
             course_id, group_id, bitstring = lecture.course_id, lecture.group_id, lecture.bitstring
-            weeks = list(bitstring[8:])  # Extract weeks from the bitstring
-            start_week = weeks.index('1') if '1' in weeks else -1  # Find the first week of the lecture
+            weeks = list(bitstring[8:])  
+            start_week = weeks.index('1') if '1' in weeks else -1  
             lecture_start_weeks[f"{course_id}-{group_id}"] = start_week
 
         # Check labs and assign penalties
         for i, lab in enumerate(lab_population):
-            # Extract lab information
             lab_course_id, lab_group_id, lab_bitstring = lab.course_id, lab.group_id.split('-')[1], lab.bitstring
-            lab_weeks = list(lab_bitstring[8:])  # Extract weeks from the bitstring
-            lab_start_week = lab_weeks.index('1') if '1' in lab_weeks else -1  # Find the first week of the lab
+            lab_weeks = list(lab_bitstring[8:])  
+            lab_start_week = lab_weeks.index('1') if '1' in lab_weeks else -1 
 
-            # Find the corresponding lecture start week
             lecture_key = f"{lab_course_id}-{lab_group_id}"
             lecture_start_week = lecture_start_weeks.get(lecture_key, -1)
 
-            # Check if the lab starts at least `min_weeks_after` weeks after the lecture
             if lecture_start_week != -1 and lab_start_week != -1:
                 actual_gap = lab_start_week - lecture_start_week
                 violation_amount = max(0, self.min_weeks_after - actual_gap)
@@ -324,6 +334,50 @@ class LabSessionSpacingConstraint(Constraint):
 
         return self.violations
 
+class SoftSlotPreferenceConstraint(Constraint):
+    def __init__(self, prefs_slot: dict, course_teacher: dict, duration_lookup: dict):    
+        super().__init__("Soft slot preference", is_soft=True)
+        self.prefs_slot = prefs_slot
+        self.course_teacher = course_teacher
+        self.duration_lookup = duration_lookup
+
+    @staticmethod
+    def rect_mf(x, start_idx, end_idx):
+        return np.where((x >= start_idx) & (x <= end_idx), 1.0, 0.0)
+
+    def _membership_array(self, spec):
+        if spec["shape"] == "rect":
+            return self.rect_mf(UNIVERSE, spec["start_idx"], spec["end_idx"])
+        else:
+            return fuzz.trapmf(UNIVERSE, [spec["a"], spec["b"], spec["c"], spec["d"]])
+
+    def evaluate(self, ind: Individual) -> float | None:
+        key = f"{ind.course_id}-{ind.group_id}"
+        teacher = self.course_teacher.get(key)
+        if teacher is None:
+            return None                     
+
+        spec = self.prefs_slot.get(teacher, {}).get(key)
+        if spec is None:
+            return None
+
+        mu_all = self._membership_array(spec)   
+
+        # scheduled rectangle indices
+        day = int(ind.bitstring[:4], 2)
+        session_start = int(ind.bitstring[4:8], 2)
+        start_idx = slot_of.get((day, session_start))
+        duration = self.duration_lookup.get(ind.course_id, 1)
+        block = slice(start_idx, start_idx + duration)
+
+        # area of overlap and total preference area
+        overlap = mu_all[block].sum()
+        pref_area = mu_all.sum()
+        if pref_area == 0:
+            return 1.0            
+
+        return overlap / pref_area      
+
 class ConstraintsManager:
     def __init__(self):
         self.constraints = []
@@ -334,16 +388,16 @@ class ConstraintsManager:
     def evaluate(self, individual: Individual):
         total_violations = 0
         for constraint in self.constraints:
-            violations = constraint.evaluate(individual)
-            if violations is not None:
-                total_violations += violations
-        return 1 - 1 / (1 + total_violations)
+            if constraint.is_soft is False:
+                violations = constraint.evaluate(individual)
+                if violations is not None:
+                    total_violations += violations
+        return 1 / (1 + total_violations)
 
     def evaluate_population(self, population, is_lab=False, lecture_population=None):
-        total_penalties = [0] * len(population)  # Initialize a list to store penalties for each individual
+        total_penalties = [0] * len(population)  
         
         for constraint in self.constraints:
-            # Handle LectureBeforeLabConstraint separately
             if isinstance(constraint, LectureBeforeLabConstraint):
                 if lecture_population is None:
                     raise ValueError("Lecture population is required for LectureBeforeLabConstraint.")
@@ -352,7 +406,6 @@ class ConstraintsManager:
                     for i, penalty in enumerate(penalties):
                         total_penalties[i] += penalty
             else:
-                # Handle other constraints
                 if is_lab and constraint.name == 'Course same semester lab constraint':
                     violations = constraint.evaluate_population(population, lecture_population)
                     if violations is not None:
@@ -364,57 +417,73 @@ class ConstraintsManager:
                         for i in range(len(population)):
                             total_penalties[i] += violations  
                 else:
-                    continue  # Skip irrelevant constraints
+                    continue  
         
-        # Calculate the overall fitness score based on penalties
-        fitness_scores = [1 - 1 / (1 + penalty**2) for penalty in total_penalties]
+        fitness_scores = [1 / (1 + penalty**2) for penalty in total_penalties]
         return fitness_scores
 
+    def evaluate_soft_individual(self, individual: Individual):
+        total_score = 0
+        for constraint in self.constraints:
+            if constraint.is_soft:
+                score = constraint.evaluate(individual)
+                if score is not None:
+                    total_score += score
+        return total_score
+    
     def reset_violations(self):
         for constraint in self.constraints:
             constraint.violations = 0
 
-    def count_violations(self, population, lecture_population=None):
-        violations_dict = {}
+    def count_violations(self, population: list["Individual"], lecture_population: list["Individual"] | None = None, verbose: bool = True):
+        hard_dict: dict[str, int]    = {}
+        soft_dict: dict[str, float]  = {}
 
-        print("-" * 50)
+        # ---------- initialise ----------------------------------------
+        for idx, c in enumerate(self.constraints):
+            key = f"{c.name}_{idx}"
+            if getattr(c, "is_soft", False):
+                soft_dict[key] = 0.0
+            else:
+                hard_dict[key] = 0
 
-        # Handle population constraints
-        for idx, constraint in enumerate(self.constraints):
-            name = f"{constraint.name}_{idx}"
-            violations_dict[name] = 0  # Initialize
-
-            if isinstance(constraint, LectureBeforeLabConstraint):
+        # ---------- population‑level constraints ----------------------
+        for idx, c in enumerate(self.constraints):
+            key = f"{c.name}_{idx}"
+            if isinstance(c, LectureBeforeLabConstraint):
                 if lecture_population is None:
-                    raise ValueError("Lecture population is required for LectureBeforeLabConstraint.")
-                penalties = constraint.evaluate_population(population, lecture_population)
-                if penalties is not None: 
-                    violations_dict[name] = sum(penalties)
-            elif constraint.name in {'Course same semester constraint', 'Course same semester lab constraint'}:
-                is_lab = constraint.name == 'Course same semester lab constraint'
+                    raise ValueError("Lecture population required for LectureBeforeLabConstraint")
+                pen = c.evaluate_population(population, lecture_population)
+                hard_dict[key] += sum(pen) if not c.is_soft else 0
+
+            elif c.name in {"Course same semester constraint", "Course same semester lab constraint"}:
+                is_lab = c.name == "Course same semester lab constraint"
                 if is_lab:
-                    violations = constraint.evaluate_population(population, lecture_population)
+                    viol = c.evaluate_population(population, lecture_population)
                 else:
-                    violations = constraint.evaluate_population(population)
-                if violations is not None:
-                    violations_dict[name] = violations
+                    viol = c.evaluate_population(population)
+                hard_dict[key] += viol   
 
-        # Handle individual constraints
-        for idx, constraint in enumerate(self.constraints):
-            name = f"{constraint.name}_{idx}"
-            if constraint.name not in {'Course same semester constraint', 'Course same semester lab constraint'}:
-                for individual in population:
-                    course_id = individual.course_id
-                    group_id = individual.group_id if lecture_population is None else individual.group_id.split('-')[1]
-                    session_info = individual.bitstring
+        # ---------- individual‑level constraints ----------------------
+        for idx, c in enumerate(self.constraints):
+            key = f"{c.name}_{idx}"
 
-                    violations = constraint.evaluate(individual)
-                    if violations:
-                        print(f"Course {course_id} violates {constraint.name} with {violations} violations.")
-                        violations_dict[name] += violations
+            # skip population‑only constraints
+            if c.name in {'Course same semester constraint', 'Course same semester lab constraint'}:
+                continue
 
-        for name, count in violations_dict.items():
-            print("Constraint:", name, " - Violations:", count)
+            for ind in population:
+                value = c.evaluate(ind)     
 
-        # Return as list of tuples, if needed
-        return list(violations_dict.items())
+                if getattr(c, "is_soft", False):
+                    if value is not None:
+                        soft_dict[key] += float(value)
+                else:
+                    hard_dict[key] += int(value)
+
+        if verbose:
+            _pretty_table("HARD VIOLATIONS", hard_dict, is_soft=False)
+            _pretty_table("SOFT SATISFACTION", soft_dict, is_soft=True)
+
+        return hard_dict, soft_dict
+

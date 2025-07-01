@@ -1,39 +1,11 @@
 import random
+import numpy as np
 
-# Ex: lst = [1, 2, 3, 2, 4, 5, 1, 6, 3]
-# Output:
-# {
-#     2: [1, 3],
-#     1: [0, 6],
-#     3: [2, 8]
-# }
-def find_duplicates(lst):
-    duplicates = {}
-    seen = {}
-    
-    for i, value in enumerate(lst):
-        if value in seen:
-            if value in duplicates:
-                duplicates[value].append(i)
-            else:
-                duplicates[value] = [seen[value], i]
-        else:
-            seen[value] = i
-    
-    return duplicates
+SLOTS = [(day, sess) for day in range(2, 8) for sess in range(2, 13)]       
+UNIVERSE = np.arange(len(SLOTS)) 
 
-def count_overlap(session_starts, num_sessions):
-    session_ends = [start + num for start, num in zip(session_starts, num_sessions)]
-    sorted_intervals = sorted(zip(session_starts, session_ends))
-    overlaps = 0
-    for i in range(len(sorted_intervals) - 1):
-        if sorted_intervals[i][1] > sorted_intervals[i + 1][0]:
-            overlaps += 1
-    return overlaps
-
-def weeks_overlap(week1, week2):
-    """Return True if any week bit is 1 in both week1 and week2."""
-    return any(w1 == '1' and w2 == '1' for w1, w2 in zip(week1, week2))
+slot_of = { ds: idx for idx, ds in enumerate(SLOTS) }  
+day_sess_of_slot = dict(enumerate(SLOTS))                      
 
 def get_same_semester_courses(course_id, df1, df2):
     semester = None
@@ -94,3 +66,16 @@ def create_non_conflicting_time(lecture, same_semester_lectures, num_trials=20):
 
     return None  # fallback if no conflict-free time found
 
+def _pretty_table(title: str, data: dict, is_soft=False):
+    if not data:
+        return
+    # longest key → dynamic width
+    w = max(len(k) for k in data) + 2          # +2 for a little padding
+
+    print("-" * (w + 12))
+    print(title)
+    for k, v in data.items():
+        if is_soft:
+            print(f"{k:<{w}} {v:>9.3f}")
+        else:
+            print(f"{k:<{w}} {v:>9}")
