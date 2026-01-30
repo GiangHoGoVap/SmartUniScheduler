@@ -1,11 +1,6 @@
 import random
-import numpy as np
-
-SLOTS = [(day, sess) for day in range(2, 8) for sess in range(2, 13)]       
-UNIVERSE = np.arange(len(SLOTS)) 
-
-slot_of = { ds: idx for idx, ds in enumerate(SLOTS) }  
-day_sess_of_slot = dict(enumerate(SLOTS))                      
+from model.individual import Individual
+from config import CLASS_BLOCK_SIZE
 
 def get_same_semester_courses(course_id, df1, df2):
     semester = None
@@ -79,3 +74,27 @@ def _pretty_table(title: str, data: dict, is_soft=False):
             print(f"{k:<{w}} {v:>9.3f}")
         else:
             print(f"{k:<{w}} {v:>9}")
+
+def convert_to_individuals(flat_individual, class_ids):
+    individuals = []
+    block_size = CLASS_BLOCK_SIZE  # 1 (day) + 1 (session) + 16 (weeks)
+    num_classes = len(class_ids)
+
+    for i in range(num_classes):
+        start = i * block_size
+        chunk = flat_individual[start:start + block_size]
+        
+        day = chunk[0]
+        session = chunk[1]
+        weeks = chunk[2:]
+
+        day_bits = format(day, '04b')
+        session_bits = format(session, '04b')
+        week_bits = ''.join(str(w) for w in weeks)
+        bitstring = day_bits + session_bits + week_bits
+
+        course_id, group_id = class_ids[i].split('-')
+        ind = Individual(course_id, group_id, bitstring)
+        individuals.append(ind)
+
+    return individuals

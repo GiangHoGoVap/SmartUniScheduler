@@ -1,9 +1,10 @@
-from model.utils import UNIVERSE, slot_of, _pretty_table
-from model.individual import Individual
-
 import pandas as pd
 import numpy as np
 import skfuzzy as fuzz
+
+from config import (slot_of, UNIVERSE)
+from model.utils import _pretty_table
+from model.individual import Individual
 
 class Constraint:
     def __init__(self, name, is_soft=False, weight=1):
@@ -371,12 +372,9 @@ class SoftSlotPreferenceConstraint(Constraint):
         block = slice(start_idx, start_idx + duration)
 
         # area of overlap and total preference area
-        overlap = mu_all[block].sum()
-        pref_area = mu_all.sum()
-        if pref_area == 0:
-            return 1.0            
+        overlap = mu_all[block].sum()          
 
-        return overlap / pref_area      
+        return 1 - overlap / duration      
 
 class ConstraintsManager:
     def __init__(self):
@@ -392,7 +390,7 @@ class ConstraintsManager:
                 violations = constraint.evaluate(individual)
                 if violations is not None:
                     total_violations += violations
-        return 1 / (1 + total_violations)
+        return 1 - 1 / (1 + total_violations)
 
     def evaluate_population(self, population, is_lab=False, lecture_population=None):
         total_penalties = [0] * len(population)  
@@ -419,7 +417,7 @@ class ConstraintsManager:
                 else:
                     continue  
         
-        fitness_scores = [1 / (1 + penalty**2) for penalty in total_penalties]
+        fitness_scores = [1 - 1 / (1 + penalty**2) for penalty in total_penalties]
         return fitness_scores
 
     def evaluate_soft_individual(self, individual: Individual):
@@ -483,7 +481,7 @@ class ConstraintsManager:
 
         if verbose:
             _pretty_table("HARD VIOLATIONS", hard_dict, is_soft=False)
-            _pretty_table("SOFT SATISFACTION", soft_dict, is_soft=True)
+            _pretty_table("SOFT DISSATISFACTION", soft_dict, is_soft=True)
 
         return hard_dict, soft_dict
 

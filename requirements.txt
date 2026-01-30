@@ -6,3 +6,4 @@ pygad
 ollama
 scikit-fuzzy
 scipy
+pymoo
